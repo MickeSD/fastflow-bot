@@ -1,18 +1,14 @@
 import os
-
 from typing import Any
 
 import structlog
-
 from aiogram import Bot
-
 from arq import cron
 from arq.connections import RedisSettings
 
 from core.config import BOT_TOKEN
 from core.di import Container
 from core.logger import setup_logging
-
 from services.scheduler import backup_database, check_payments, cleanup_inactive_keys
 
 logger = structlog.get_logger(__name__)

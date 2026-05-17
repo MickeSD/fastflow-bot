@@ -140,10 +140,25 @@ class KeyRepository:
 
     async def delete_old_inactive_keys(self, days: int = 90) -> int:
         """Удаляет ключи, которые были деактивированы более N дней назад"""
+
         conn = await self.db.connect()
-        async with conn.execute(
-            f"DELETE FROM keys WHERE is_active = 0 AND deactivated_at IS NOT NULL AND date(deactivated_at) <= date('now', '-{days} days')"
-        ) as cursor:
-            deleted = cursor.rowcount
+
+        cutoff = (
+            datetime.now(ZoneInfo("Europe/Moscow")).date()
+            - timedelta(days=days)
+        ).strftime("%Y-%m-%d")
+
+        cursor = await conn.execute(
+            """
+            DELETE FROM keys
+            WHERE is_active = 0
+            AND deactivated_at IS NOT NULL
+            AND date(deactivated_at) <= date(?)
+            """,
+            (cutoff,),
+        )
+
+        deleted = cursor.rowcount
         await conn.commit()
+
         return deleted

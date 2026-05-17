@@ -1,3 +1,5 @@
+import os
+
 import aiohttp.web
 import structlog
 from prometheus_client import generate_latest
@@ -36,7 +38,9 @@ async def start_observability_server(container: Container, port: int = 8080) -> 
 
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+
+    bind_host = os.getenv("OBSERVABILITY_HOST", "127.0.0.1")
+    site = aiohttp.web.TCPSite(runner, bind_host, port)
     await site.start()
 
     logger.info(f"Health & Metrics сервер запущен на порту {port} (/metrics, /health)")

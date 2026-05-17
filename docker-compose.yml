@@ -5,6 +5,10 @@ services:
     build: .
     container_name: flow_app
     restart: unless-stopped
+
+    environment:
+      OBSERVABILITY_HOST: "0.0.0.0"
+
     env_file:
       - .env
     volumes:
@@ -26,6 +30,10 @@ services:
     build: .
     container_name: flow_worker
     restart: unless-stopped
+
+    environment:
+      OBSERVABILITY_HOST: "0.0.0.0"
+
     env_file:
       - .env
     volumes:

@@ -1,5 +1,6 @@
 import asyncio
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
 from sqlalchemy import pool
@@ -19,12 +20,12 @@ if config.config_file_name is not None:
 
 target_metadata = None
 
-def do_run_migrations(connection):
+def do_run_migrations(connection: Any) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()
 
-async def run_async_migrations():
+async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -34,7 +35,7 @@ async def run_async_migrations():
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     """Запуск миграций в online-режиме (асинхронно)."""
     asyncio.run(run_async_migrations())
 

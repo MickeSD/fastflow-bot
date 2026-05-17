@@ -1,5 +1,5 @@
 import os
-
+from typing import Any
 import structlog
 from aiogram import Bot
 from arq import cron
@@ -39,7 +39,7 @@ class WorkerSettings:
     on_shutdown = shutdown
 
     # Сюда можно добавлять разовые асинхронные задачи
-    functions = []
+    functions: list[Any] = []
 
     # Наше расписание (Cron)
     cron_jobs = [

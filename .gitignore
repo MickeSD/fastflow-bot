@@ -1,0 +1,34 @@
+# Секреты и конфигурация
+.env
+
+# Базы данных SQLite
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+
+# Виртуальное окружение
+venv/
+env/
+
+# Кэш Python и линтеров
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Логи, бэкапы и текстовые отчеты
+bot.log
+*.log
+backups/
+*.txt
+
+# Отчеты о покрытии тестами
+.coverage
+coverage.xml
+repomix-output.xml
+
+# Настройки редакторов (VS Code)
+.vscode/

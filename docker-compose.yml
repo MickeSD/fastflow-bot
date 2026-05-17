@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  flow-app:
+    build: .
+    container_name: flow_app
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./app_data.db:/app/vpn_database.db
+      - ./backups:/app/backups
+      - ./bot.log:/app/bot.log
+    ports:
+      - "8080:8080"
+    depends_on:
+      - flow-redis
+
+  flow-redis:
+    image: redis:7-alpine
+    container_name: flow_redis
+    restart: unless-stopped
+
+  # ✅ НАШ НОВЫЙ МИКРОСЕРВИС ДЛЯ ФОНОВЫХ ЗАДАЧ
+  flow-worker:
+    build: .
+    container_name: flow_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./app_data.db:/app/vpn_database.db
+      - ./backups:/app/backups
+      - ./bot.log:/app/bot.log
+    # Команда запускает ARQ, а не бота
+    command: python -m arq infrastructure.worker.WorkerSettings
+    depends_on:
+      - flow-redis

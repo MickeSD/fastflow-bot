@@ -1,0 +1,43 @@
+import aiohttp.web
+import structlog
+from prometheus_client import generate_latest
+
+from core.di import Container
+
+logger = structlog.get_logger(__name__)
+
+async def metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """Отдает метрики для Prometheus"""
+    # aiohttp требует разделять content_type и charset
+    return aiohttp.web.Response(
+        body=generate_latest(),
+        content_type="text/plain",
+        charset="utf-8"
+    )
+
+async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
+    """Health-check для Docker / Kubernetes"""
+    container: Container = request.app["container"]
+    try:
+        db = await container.db().connect()
+        await db.execute("SELECT 1")
+        return aiohttp.web.json_response({"status": "ok", "database": "connected"})
+    except Exception as e:
+        logger.error("health_check_failed", error=str(e))
+        return aiohttp.web.json_response({"status": "degraded", "database": str(e)}, status=503)
+
+async def start_observability_server(container: Container, port: int = 8080) -> aiohttp.web.AppRunner:
+    """Запускает фоновый HTTP-сервер для метрик и health-чеков"""
+    app = aiohttp.web.Application()
+    app["container"] = container
+
+    app.router.add_get("/metrics", metrics_handler)
+    app.router.add_get("/health", health_handler)
+
+    runner = aiohttp.web.AppRunner(app)
+    await runner.setup()
+    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    logger.info(f"Health & Metrics сервер запущен на порту {port} (/metrics, /health)")
+    return runner

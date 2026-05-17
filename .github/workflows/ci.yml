@@ -30,6 +30,11 @@ jobs:
     - name: Run Mypy (Type Checker)
       run: poetry run mypy .
 
+    - name: Set test environment variables
+      run: |
+        echo "BOT_TOKEN=test_token" >> $GITHUB_ENV
+        echo "ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> $GITHUB_ENV
+
     - name: Run Pytest with Coverage
       run: poetry run pytest -v
       

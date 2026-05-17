@@ -1,4 +1,5 @@
 import os
+
 import structlog
 from aiogram import Bot
 from arq import cron
@@ -15,10 +16,10 @@ async def startup(ctx: dict) -> None:
     """Выполняется при запуске воркера"""
     setup_logging()
     logger.info("Запуск Worker-а для фоновых задач (arq)...")
-    
+
     container = Container()
     bot = Bot(token=BOT_TOKEN)
-    
+
     # Сохраняем зависимости в контекст (ctx), который будет передаваться в каждую задачу
     ctx["container"] = container
     ctx["bot"] = bot
@@ -33,13 +34,13 @@ class WorkerSettings:
     """Настройки очереди задач arq"""
     # В Docker-сети хост Redis совпадает с именем контейнера
     redis_settings = RedisSettings(host=os.getenv("REDIS_HOST", "flow-redis"), port=6379)
-    
+
     on_startup = startup
     on_shutdown = shutdown
-    
+
     # Сюда можно добавлять разовые асинхронные задачи
-    functions = [] 
-    
+    functions = []
+
     # Наше расписание (Cron)
     cron_jobs = [
         cron(check_payments, hour=10, minute=0),

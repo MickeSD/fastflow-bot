@@ -1,12 +1,12 @@
 """initial
 
 Revision ID: 001
-Revises: 
+Revises:
 Create Date: 2026-05-18 10:00:00.000000
 
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = '001'
 down_revision = None
@@ -20,7 +20,7 @@ def upgrade() -> None:
         sa.Column('username', sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint('tg_id')
     )
-    
+
     # Создаем таблицу keys
     op.create_table('keys',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
@@ -37,7 +37,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['tg_id'], ['users.tg_id'], ),
         sa.PrimaryKeyConstraint('id')
     )
-    
+
     # Создаем индексы
     op.create_index('idx_keys_tg_id', 'keys', ['tg_id'], unique=False)
     op.create_index('idx_keys_is_active', 'keys', ['is_active'], unique=False)

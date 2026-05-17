@@ -17,7 +17,7 @@ with open("full_project.txt", "w", encoding="utf-8") as outfile:
         for file in files:
             if any(file.endswith(ext) for ext in ALLOWED_EXTENSIONS) or file in ALLOWED_FILES:
                 filepath = os.path.join(root, file)
-                
+
                 # Пропускаем сам скрипт и итоговый файл, чтобы не дублировать код
                 if file in ["pack.py", "full_project.txt"]:
                     continue

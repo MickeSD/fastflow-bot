@@ -13,7 +13,6 @@ from aiogram.types import FSInputFile
 
 from application.services.vpn import VpnService
 from core.config import ADMIN_ID, BASE_DIR
-from core.di import Container
 from infrastructure.database import Database
 from infrastructure.repositories import KeyRepository
 

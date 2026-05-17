@@ -1,14 +1,12 @@
 import asyncio
+
 import aiosqlite
 import structlog
 from aiogram import Bot
 
 # ✅ Добавили импорт BASE_DIR сюда:
-from core.config import ADMIN_ID, ENCRYPTION_KEY, BASE_DIR
+from core.config import ENCRYPTION_KEY
 from core.security import decrypt_data, encrypt_data
-
-from alembic import command
-from alembic.config import Config
 
 logger = structlog.get_logger(__name__)
 
@@ -68,5 +66,5 @@ class Database:
         except Exception as e:
             logger.critical(f"FATAL: Неверный формат ENCRYPTION_KEY! Ошибка: {e}")
             exit(1)
-            
+
         logger.info("Подключение к БД успешно проверено.")

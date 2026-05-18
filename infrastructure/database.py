@@ -52,10 +52,10 @@ class Database:
         await conn.backup(backup_db)
 
     async def init_db(self, bot: Bot | None = None) -> None:
-        """Инициализация БД (Миграции теперь управляются отдельно через Alembic)"""
+        """Инициализация БД"""
         if not ENCRYPTION_KEY:
-            logger.critical("FATAL: Переменная ENCRYPTION_KEY не найдена в .env!")
-            exit(1)
+            # ✅ Фикс: Выбрасываем исключение вместо exit(1)
+            raise RuntimeError("FATAL: Переменная ENCRYPTION_KEY не найдена в .env!")
 
         test_str = "fastflow_test"
         try:
@@ -63,7 +63,7 @@ class Database:
             if decrypt_data(enc) != test_str:
                 raise ValueError("Ошибка математики шифрования")
         except Exception as e:
-            logger.critical(f"FATAL: Неверный формат ENCRYPTION_KEY! Ошибка: {e}")
-            exit(1)
+            # ✅ Фикс: Выбрасываем исключение
+            raise RuntimeError(f"FATAL: Неверный формат ENCRYPTION_KEY! Ошибка: {e}") from e
 
         logger.info("Подключение к БД успешно проверено.")

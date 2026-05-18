@@ -4,13 +4,10 @@ from pathlib import Path
 
 from aiohttp import ClientTimeout
 from cryptography.fernet import Fernet, MultiFernet
-from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-load_dotenv(BASE_DIR / ".env")
 
 # строгая схема валидации переменных окружения
 class Settings(BaseSettings):
@@ -18,12 +15,13 @@ class Settings(BaseSettings):
     admin_id: int = Field(0, alias="ADMIN_ID")
     encryption_key: str = Field(alias="ENCRYPTION_KEY")
     payment_phone: str = Field("+7 (000) 000-00-00", alias="PAYMENT_PHONE")
-    metrics_token: str = Field("secure_default_token", alias="METRICS_TOKEN") # новый защитный токен
+    metrics_token: str = Field("secure_default_token", alias="METRICS_TOKEN")
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
-        extra="allow"  # Позволяет считывать динамические панели PANEL_1...
+        # ✅ Оставляем "allow", иначе Pydantic упадет из-за динамических переменных PANEL_*_HOST!
+        extra="allow"
     )
 
     @field_validator("encryption_key")

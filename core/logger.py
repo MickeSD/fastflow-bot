@@ -9,19 +9,30 @@ import structlog
 from core.config import BASE_DIR
 
 
+class AdminActionFilter(logging.Filter):
+    """Фильтр, который пропускает только события аудита администратора"""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, dict) and "event" in record.msg:
+            return "admin_" in str(record.msg["event"])
+        # ✅ Ищем точное вхождение JSON-ключа, чтобы избежать false positives
+        return '"event": "admin_' in str(record.msg)
+
+
 def sensitive_data_processor(
     logger: Any, log_method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """Маскирует UUID, токены, ссылки vless и технические email клиентов в логах"""
+    """Маскирует персональные данные и предотвращает Log Injection"""
     for key, value in event_dict.items():
         if isinstance(value, str):
+            # ✅ Санитизация логов: заменяем переводы строк на безопасные пробелы
+            clean_val = value.replace("\n", " ").replace("\r", " ")
+
             val = re.sub(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
                 "***-UUID-***",
-                value,
+                clean_val,
             )
             val = re.sub(r"(vless://)[^@]+(@)", r"\1***\2", val)
-            # зачищаем технические email панелей (например, user_526485744_abcde)
             val = re.sub(r"user_\d+(_[0-9a-fA-Za-z]+)?", "user_***_masked", val)
             event_dict[key] = val
     return event_dict
@@ -39,15 +50,26 @@ def asyncio_context_processor(
     return event_dict
 
 def setup_logging() -> None:
-    """Глобальная настройка JSON-логирования"""
-    log_file = BASE_DIR / "bot.log"
+    """Глобальная настройка JSON-логирования с сепарацией логов админа"""
+    logs_dir = BASE_DIR / "logs"
+    logs_dir.mkdir(exist_ok=True)  # ✅ Гарантируем, что папка существует
 
-    # Базовый конфиг перехватывает ВСЕ логи от других библиотек (aiogram, aiosqlite)
+    log_file = logs_dir / "bot.log"
+    admin_log_file = logs_dir / "admin_actions.log"
+
+    # Обработчик для ВСЕХ логов
+    main_file_handler = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+
+    # ✅ Специальный обработчик ТОЛЬКО для действий админа
+    admin_file_handler = RotatingFileHandler(admin_log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    admin_file_handler.addFilter(AdminActionFilter())
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
         handlers=[
-            RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+            main_file_handler,
+            admin_file_handler, # Подключаем второй хэндлер
             logging.StreamHandler(),
         ],
     )
@@ -62,7 +84,7 @@ def setup_logging() -> None:
             sensitive_data_processor,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(ensure_ascii=False), # ✅ Формат JSON
+            structlog.processors.JSONRenderer(ensure_ascii=False),
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),

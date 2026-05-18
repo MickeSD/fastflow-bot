@@ -10,7 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from core.config import PANELS, REQUEST_TIMEOUT
 from core.exceptions import PanelAPIError, PanelOfflineError
-from core.observability import API_REQUEST_DURATION
+from core.observability import API_REQUEST_DURATION, PANEL_CB_TRIPS
 
 logger = structlog.get_logger(__name__)
 
@@ -20,26 +20,32 @@ class PanelCircuitBreaker:
         self.fail_max = fail_max
         self.reset_timeout = reset_timeout
         self.state: dict[str, dict[str, Any]] = {}  # host -> {"failures": int, "tripped_at": float}
+        self._lock = asyncio.Lock()
 
-    def check(self, host: str) -> None:
-        if host not in self.state:
-            return
-        data = self.state[host]
-        if data["failures"] >= self.fail_max:
-            if time.time() - data["tripped_at"] < self.reset_timeout:
-                raise PanelOfflineError(f"🚨 Circuit Breaker активен для {host}. Узел временно заблокирован.")
-            else:
-                self.state[host] = {"failures": 0, "tripped_at": 0.0}
+    async def check(self, host: str) -> None:
+        async with self._lock:
+            if host not in self.state:
+                return
+            data = self.state[host]
+            if data["failures"] >= self.fail_max:
+                if time.time() - data["tripped_at"] < self.reset_timeout:
+                    raise PanelOfflineError(f"🚨 Circuit Breaker активен для {host}. Узел временно заблокирован.")
+                else:
+                    self.state[host] = {"failures": 0, "tripped_at": 0.0}
 
-    def record_success(self, host: str) -> None:
-        self.state[host] = {"failures": 0, "tripped_at": 0.0}
-
-    def record_failure(self, host: str) -> None:
-        if host not in self.state:
+    async def record_success(self, host: str) -> None:
+        async with self._lock:
             self.state[host] = {"failures": 0, "tripped_at": 0.0}
-        self.state[host]["failures"] += 1
-        if self.state[host]["failures"] >= self.fail_max:
-            self.state[host]["tripped_at"] = time.time()
+
+    async def record_failure(self, host: str) -> None:
+        async with self._lock:
+            if host not in self.state:
+                self.state[host] = {"failures": 0, "tripped_at": 0.0}
+            self.state[host]["failures"] += 1
+            if self.state[host]["failures"] >= self.fail_max:
+                self.state[host]["tripped_at"] = time.time()
+                # ✅ Отправляем метрику в Prometheus при размыкании цепи
+                PANEL_CB_TRIPS.labels(panel_host=host).inc()
 
 panel_breaker = PanelCircuitBreaker()
 
@@ -99,7 +105,7 @@ async def _safe_api_request(
     host = parsed_url.hostname or "unknown"
 
     # 1. Проверяем состояние предохранителя для данного хоста
-    panel_breaker.check(host)
+    await panel_breaker.check(host)
 
     session = await PanelAPI.get_session()
     start_time = time.perf_counter()
@@ -116,12 +122,12 @@ async def _safe_api_request(
             if resp.status == 200:
                 res = await resp.json()
                 if res.get("success", False):
-                    panel_breaker.record_success(host)  # Сброс счетчика при успехе
+                    await panel_breaker.record_success(host)  # Сброс счетчика при успехе
                     return True
 
                 msg = str(res.get("msg", "")).lower()
                 if "delclient" in url.lower() and ("not found" in msg or "no such" in msg):
-                    panel_breaker.record_success(host)
+                    await panel_breaker.record_success(host)
                     return True
 
                 logger.warning("api_request_success_false", url=url, response=res)
@@ -145,7 +151,7 @@ async def _safe_api_request(
         if isinstance(e, PanelAPIError) and "Сессия 3x-ui была обновлена" in str(e):
             pass
         else:
-            panel_breaker.record_failure(host) # Фиксируем сбой предохранителем
+            await panel_breaker.record_failure(host) # Фиксируем сбой предохранителем
 
         logger.warning("api_request_failed", url=url, error=str(e))
         if isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError)):

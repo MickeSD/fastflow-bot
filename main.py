@@ -3,6 +3,8 @@ import asyncio
 import aiohttp.web
 import structlog
 from aiogram import Bot, Dispatcher
+from alembic import command
+from alembic.config import Config
 
 from core.config import BOT_TOKEN
 from core.di import Container
@@ -26,13 +28,18 @@ async def on_shutdown(bot: Bot, container: Container, web_runner: aiohttp.web.Ap
 
 async def main() -> None:
     setup_logging()
-    setup_observability() # ✅ Запускаем трейсинг
+    setup_observability()
 
     container = Container()
     bot = Bot(token=BOT_TOKEN)
     await container.db().init_db(bot)
 
-    # ✅ Запускаем фоновый сервер мониторинга
+    # ✅ Броня: Автоматически применяем миграции БД при старте контейнера
+    logger.info("Запуск проверки миграций БД (Alembic)...")
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+    logger.info("Схема БД актуальна!")
+
     web_runner = await start_observability_server(container, port=8080)
 
     dp = Dispatcher()

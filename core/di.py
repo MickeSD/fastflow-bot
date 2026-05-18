@@ -17,7 +17,7 @@ class Container(containers.DeclarativeContainer):
     # 1. Провайдер базы данных (Singleton - существует в единственном экземпляре)
     db = providers.Singleton(
         Database,
-        db_path=str(BASE_DIR / "vpn_database.db")
+        db_path=str(BASE_DIR / "db_data" / "vpn_database.db")
     )
 
     # 2. Провайдер репозитория (В него автоматически прокидывается db)

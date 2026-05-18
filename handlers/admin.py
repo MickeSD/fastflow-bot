@@ -43,6 +43,8 @@ class AddKeyFSM(StatesGroup):
 
 @router.message(Command("add_key"))
 async def cmd_add_key(message: Message, state: FSMContext) -> None:
+    # ✅ Лог запуска генерации ключа админом
+    logger.info("admin_command_add_key", admin_id=message.from_user.id if message.from_user else None)
     await message.answer("Введи Telegram ID или @username пользователя:")
     await state.set_state(AddKeyFSM.tg_id)
 
@@ -141,8 +143,8 @@ async def process_price(message: Message, state: FSMContext) -> None:
     if not message.text or not message.from_user:
         return
 
-    if not message.text.isdigit() or int(message.text) < 0 or int(message.text) > 1000000:
-        await message.answer("❌ Цена должна быть положительным числом (от 0 до 1 000 000). Попробуй еще раз:")
+    if not message.text.isdigit() or int(message.text) < 0 or int(message.text) > 10000:
+        await message.answer("❌ Цена должна быть в диапазоне от 0 до 10 000 рублей. Попробуй еще раз:")
         return
 
     await state.update_data(price=int(message.text))
@@ -205,10 +207,17 @@ async def process_date(
     settings_json = json.dumps(client_settings)
 
     try:
-        # ✅ Сохраняем ключ через репозиторий
         await key_repo.add_key(
             tg_id=data["tg_id"], username=real_name, vless_key=data["vless_key"], price=data["price"],
             payment_date=valid_date, uuid=str(data.get('uuid')), panel_host=host, inbound_id=inbound, settings=settings_json,
+        )
+        # ✅ Аудит-лог: Ключ успешно создан админом
+        logger.info(
+            "admin_action_add_key_success",
+            admin_id=message.from_user.id if message.from_user else None,
+            target_tg_id=data["tg_id"],
+            panel_host=host,
+            price=data["price"]
         )
         await message.answer(f"✅ Ключ добавлен для @{real_name}! Сервер: `{host}`.")
     except Exception as e:
@@ -236,6 +245,10 @@ async def process_extend(
     parts = callback.data.split("_")
     key_id = int(parts[1])
     days = int(parts[2])
+
+    if days > 366:
+        await callback.answer("❌ Запрещено продлевать ключ более чем на 1 год за один раз!", show_alert=True)
+        return
 
     success, status_msg = await vpn_service.extend_key(key_id, days)
     await callback.answer(status_msg, show_alert=True)
@@ -326,6 +339,9 @@ async def cmd_manage_key(
         await message.answer(f"❌ Ключ ID {key_id} не найден или уже деактивирован.")
         return
 
+    # ✅ Лог доступа админа к конкретному ключу
+    logger.info("admin_command_manage_key", admin_id=message.from_user.id if message.from_user else None, key_id=key_id)
+
     status = "✅ Активен" if key_info["is_active"] else "❌ Отключен"
     short_key = f"{key_info['vless_key'][:40]}..." if len(key_info["vless_key"]) > 40 else key_info["vless_key"]
 
@@ -359,14 +375,19 @@ async def admin_delete_handler(
         pass
 
     key_id = int(callback.data.split("_")[2])
-
-    # Чтобы использовать cancel_subscription, нам нужен tg_id владельца ключа
     key_info = await key_repo.get_key_info(key_id)
     if not key_info:
         await callback.answer("Ключ не найден", show_alert=True)
         return
 
-    # ✅ БОЖЕСТВЕННАЯ ЧИСТОТА: Делегируем всё удаление нашему сервису!
+    # ✅ Аудит-лог: Ключ принудительно удален админом
+    logger.info(
+        "admin_action_delete_key",
+        admin_id=callback.from_user.id if callback.from_user else None,
+        key_id=key_id,
+        target_tg_id=key_info["tg_id"],
+        panel_host=key_info["panel_host"]
+    )
     success, msg_text = await vpn_service.cancel_subscription(key_id, key_info["tg_id"])
 
     if success:

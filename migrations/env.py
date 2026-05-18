@@ -12,7 +12,7 @@ from core.config import BASE_DIR
 config = context.config
 
 # Переопределяем URL базы данных, чтобы он всегда смотрел на наш файл
-db_path = BASE_DIR / "vpn_database.db" # ✅ Внутри Docker он называется так!
+db_path = BASE_DIR / "db_data" / "vpn_database.db"
 config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
 
 if config.config_file_name is not None:

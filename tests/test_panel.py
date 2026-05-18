@@ -1,7 +1,15 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from aioresponses import aioresponses
 
-from services.panel import PanelAPI, _safe_api_request
+from services.panel import (
+    PanelAPI,
+    _safe_api_request,
+    add_client_to_panel,
+    delete_client_from_panel,
+    update_client_in_panel,
+)
 
 
 @pytest.mark.asyncio
@@ -43,3 +51,28 @@ async def test_safe_api_request_retry_on_401() -> None:
         )
         assert result is True
         await PanelAPI.close()
+
+@pytest.mark.asyncio
+@patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
+@patch("services.panel._safe_api_request", new_callable=AsyncMock)
+async def test_add_client_to_panel(mock_safe: AsyncMock) -> None:
+    mock_safe.return_value = True
+    res = await add_client_to_panel("test_host", 1, "uuid", "email")
+    assert res is True
+    mock_safe.assert_called_once()
+
+@pytest.mark.asyncio
+@patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
+@patch("services.panel._safe_api_request", new_callable=AsyncMock)
+async def test_update_client_in_panel(mock_safe: AsyncMock) -> None:
+    mock_safe.return_value = True
+    res = await update_client_in_panel("test_host", 1, "uuid", "email")
+    assert res is True
+
+@pytest.mark.asyncio
+@patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
+@patch("services.panel._safe_api_request", new_callable=AsyncMock)
+async def test_delete_client_from_panel(mock_safe: AsyncMock) -> None:
+    mock_safe.return_value = True
+    res = await delete_client_from_panel("test_host", 1, "uuid")
+    assert res is True

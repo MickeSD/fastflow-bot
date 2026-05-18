@@ -34,8 +34,11 @@ async def shutdown(ctx: dict) -> None:
 class WorkerSettings:
     """Настройки очереди задач arq"""
     # В Docker-сети хост Redis совпадает с именем контейнера
-    redis_settings = RedisSettings(host=os.getenv("REDIS_HOST", "flow-redis"), port=6379)
-
+    redis_settings = RedisSettings(
+        host=os.getenv("REDIS_HOST", "flow-redis"),
+        port=6379,
+        password=os.getenv("REDIS_PASSWORD", "") # ✅ Защита от передачи None
+    )
     on_startup = startup
     on_shutdown = shutdown
 
@@ -44,7 +47,15 @@ class WorkerSettings:
 
     # Наше расписание (Cron)
     cron_jobs = [
-        cron(check_payments, hour=10, minute=0),
-        cron(backup_database, hour=3, minute=0),
-        cron(cleanup_inactive_keys, hour=4, minute=0),
+        cron(check_payments,
+             hour=int(os.getenv("CRON_PAYMENTS_HOUR", "10")),
+             minute=int(os.getenv("CRON_PAYMENTS_MINUTE", "0"))),
+
+        cron(backup_database,
+             hour=int(os.getenv("CRON_BACKUP_HOUR", "3")),
+             minute=int(os.getenv("CRON_BACKUP_MINUTE", "0"))),
+
+        cron(cleanup_inactive_keys,
+             hour=int(os.getenv("CRON_CLEANUP_HOUR", "4")),
+             minute=int(os.getenv("CRON_CLEANUP_MINUTE", "0"))),
     ]

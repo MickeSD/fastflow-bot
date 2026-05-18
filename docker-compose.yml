@@ -3,44 +3,97 @@ services:
     build: .
     container_name: flow_app
     restart: unless-stopped
+    user: "65532:65532"
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
     volumes:
-      - ./app_data.db:/app/vpn_database.db
+      - ./db_data:/app/db_data
       - ./backups:/app/backups
-      - ./bot.log:/app/bot.log
+      - ./logs:/app/logs
     ports:
       - "127.0.0.1:8080:8080" # ✅ Доступ теперь открыт ТОЛЬКО внутри сервера
     depends_on:
       - flow-redis
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'      # Максимум 50% от одного ядра CPU
+          memory: 256M      # Максимум 256 МБ оперативной памяти
+    networks:
+      - external-net
+      - redis-net
+      - observability-net
 
   flow-redis:
     image: redis:7-alpine
     container_name: flow_redis
     restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'      # Redis очень легковесный, 25% CPU за глаза
+          memory: 128M      # 128 МБ кэша хватит на тысячи задач очередей
+    networks:
+      - redis-net
 
   flow-worker:
     build: .
     container_name: flow_worker
     restart: unless-stopped
+    user: "65532:65532"
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
     volumes:
-      - ./app_data.db:/app/vpn_database.db
+      - ./db_data:/app/db_data
       - ./backups:/app/backups
-      - ./bot.log:/app/bot.log
-    command: python -m arq infrastructure.worker.WorkerSettings
+      - ./logs:/app/logs
+    command: ["-m", "arq", "infrastructure.worker.WorkerSettings"]
     depends_on:
       - flow-redis
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+    networks:
+      - external-net
+      - redis-net
+      - observability-net
 
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: jaeger
     restart: unless-stopped
     ports:
-      - "127.0.0.1:16686:16686" # ✅ Jaeger UI тоже закрываем от посторонних глаз
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      # Порт 4318 убран наружу! Приложение шлет трейсы по внутренней сети Docker.
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - observability-net
+
+# === ОБЪЯВЛЕНИЕ НАШИХ ИЗОЛИРОВАННЫХ ПОДСЕТЕЙ ===
+networks:
+  external-net:
+    driver: bridge
+  redis-net:
+    driver: bridge
+    internal: true # ✅ Флаг internal полностью блокирует этой сети доступ во внешний интернет!
+  observability-net:
+    driver: bridge
+    internal: true # ✅ Трейсы циркулируют строго внутри изолированного периметра хоста

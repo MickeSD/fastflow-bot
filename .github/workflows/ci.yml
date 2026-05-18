@@ -40,8 +40,14 @@ jobs:
       
     - name: Run Bandit (Python SAST)
       # ✅ Сканируем весь корень проекта, исключая папки зависимостей и виртуальных сред
-      run: poetry run bandit -r . -x ./venv,./.git,./.mypy_cache,./.pytest_cache,./.ruff_cache -ll
+      run: poetry run bandit -r . -x ./venv,./.git,./.mypy_cache,./.pytest_cache,./.ruff_cache,./.github -ll
 
+    - name: Run Gitleaks (Secret Scanning)
+      # ✅ Защита от случайного коммита .env или паролей
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
   security-scan:
     runs-on: ubuntu-latest
     needs: build-and-test

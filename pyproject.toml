@@ -42,8 +42,13 @@ explicit_package_bases = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = "."
-# Мы убрали жесткое требование 85% покрытия и удаленную папку database
-addopts = "-v"
+# ✅ Убрали несуществующий флаг --cov-omit
+addopts = "-v --cov=. --cov-fail-under=70 --cov-report=term-missing"
+
+# ✅ Добавили правильную секцию для исключения файлов из отчета о покрытии
+[tool.coverage.run]
+omit = ["tests/*", "migrations/*", "main.py", "pack.py", "infrastructure/worker.py"]
+
 [dependency-groups]
 dev = [
     "pytest-asyncio (>=1.3.0,<2.0.0)",

@@ -1,3 +1,5 @@
+import asyncio
+import hmac
 import os
 
 import aiohttp.web
@@ -12,14 +14,16 @@ logger = structlog.get_logger(__name__)
 
 
 def check_auth(request: aiohttp.web.Request) -> bool:
-    """Проверяет токен авторизации для доступа к служебным эндпоинтам."""
-    provided_token = request.headers.get("X-Metrics-Token") or request.query.get("token")
-    return provided_token == settings.metrics_token
+    """Проверяет токен авторизации для доступа к служебным эндпоинтам с защитой от тайминг-атак."""
+    provided_token = request.headers.get("X-Metrics-Token") or request.query.get("token") or ""
+    # ✅ Переводим в байты для строгого константного времени сравнения
+    return hmac.compare_digest(provided_token.encode('utf-8'), settings.metrics_token.encode('utf-8'))
 
 
 async def metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """Отдает метрики для Prometheus с защитой авторизации."""
     if not check_auth(request):
+        await asyncio.sleep(0.1)
         return aiohttp.web.Response(text="Unauthorized", status=401)
 
     return aiohttp.web.Response(
@@ -30,39 +34,40 @@ async def metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
 
 
 async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """Глубокий health-check, верифицирующий внутренние и внешние компоненты системы."""
     if not check_auth(request):
+        await asyncio.sleep(0.1)
         return aiohttp.web.Response(text="Unauthorized", status=401)
 
     container = request.app["container"]
     checks = {}
 
-    # 1. Проверяем SQLite БД
+    # 1. Проверяем SQLite БД с жестким таймаутом
     try:
         db = await container.db().connect()
-        await db.execute("SELECT 1")
+        # ✅ Ограничиваем ожидание ответа БД
+        await asyncio.wait_for(db.execute("SELECT 1"), timeout=3.0)
         checks["database"] = "ok"
     except Exception as e:
         logger.error("health_check_db_failed", error=str(e))
         checks["database"] = "fail"
 
-    # 2. Проверяем доступность Redis
+    # 2. Проверяем доступность Redis с жестким таймаутом
     try:
         redis_host = os.getenv("REDIS_HOST", "flow-redis")
-        r_client = await aioredis.from_url(f"redis://{redis_host}:6379", socket_timeout=2)
-        await r_client.ping()
+        redis_password = os.getenv("REDIS_PASSWORD", "")
+        redis_url = f"redis://:{redis_password}@{redis_host}:6379" if redis_password else f"redis://{redis_host}:6379"
+
+        r_client = await aioredis.from_url(redis_url, socket_timeout=2)
+        # ✅ Ограничиваем ожидание пинга
+        await asyncio.wait_for(r_client.ping(), timeout=3.0)
         await r_client.close()
         checks["redis"] = "ok"
     except Exception as e:
         logger.error("health_check_redis_failed", error=str(e))
         checks["redis"] = "fail"
 
-    # Выставляем общий статус системы
     status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
-    return aiohttp.web.json_response(
-        {"status": status, "checks": checks},
-        status=200 if status == "ok" else 503
-    )
+    return aiohttp.web.json_response({"status": status, "checks": checks}, status=200 if status == "ok" else 503)
 
 async def start_observability_server(container: Container, port: int = 8080) -> aiohttp.web.AppRunner:
     """Запускает фоновый HTTP-сервер для метрик и health-чеков"""

@@ -49,7 +49,12 @@ async def check_payments(ctx: dict) -> None:
         elif days_left == 0:
             await safe_send_message(bot, tg_id, f"🚨 Твой VPN (ID: {key_id}) истекает СЕГОДНЯ! Оплати {price}₽, иначе завтра он будет отключен.")
         elif days_left < 0:
-            # ✅ БОЖЕСТВЕННО! Вся логика удаления и парсинга делегирована сервису
+            # ✅ Защита от гонки данных (Race Condition)
+            current_info = await key_repo.get_key_info(key_id)
+            if not current_info or not current_info["is_active"]:
+                continue  # Юзер уже успел отписаться сам, пропускаем!
+
+            # Вся логика удаления и парсинга делегирована сервису
             success, msg_text = await vpn_service.cancel_subscription(key_id, tg_id)
 
             if success:
@@ -68,9 +73,9 @@ async def backup_database(ctx: dict) -> None:
     backup_dir.mkdir(exist_ok=True)
 
     date_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y%m%d_%H%M")
-    db_path = BASE_DIR / "vpn_database.db"
+    db_path = BASE_DIR / "db_data" / "vpn_database.db"
     backup_path = backup_dir / f"vpn_database_{date_str}.db"
-    log_path = BASE_DIR / "bot.log"
+    log_path = BASE_DIR / "logs" / "bot.log"
     temp_log = backup_dir / f"bot_{date_str}.log"
 
     if not db_path.exists():

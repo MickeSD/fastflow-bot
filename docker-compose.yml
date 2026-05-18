@@ -1,14 +1,10 @@
-version: '3.8'
-
 services:
   flow-app:
     build: .
     container_name: flow_app
     restart: unless-stopped
-
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
-
     env_file:
       - .env
     volumes:
@@ -16,7 +12,7 @@ services:
       - ./backups:/app/backups
       - ./bot.log:/app/bot.log
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080" # ✅ Доступ теперь открыт ТОЛЬКО внутри сервера
     depends_on:
       - flow-redis
 
@@ -25,22 +21,18 @@ services:
     container_name: flow_redis
     restart: unless-stopped
 
-  # ✅ НАШ НОВЫЙ МИКРОСЕРВИС ДЛЯ ФОНОВЫХ ЗАДАЧ
   flow-worker:
     build: .
     container_name: flow_worker
     restart: unless-stopped
-
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
-
     env_file:
       - .env
     volumes:
       - ./app_data.db:/app/vpn_database.db
       - ./backups:/app/backups
       - ./bot.log:/app/bot.log
-    # Команда запускает ARQ, а не бота
     command: python -m arq infrastructure.worker.WorkerSettings
     depends_on:
       - flow-redis
@@ -50,5 +42,5 @@ services:
     container_name: jaeger
     restart: unless-stopped
     ports:
-      - "16686:16686" # Web-интерфейс Jaeger (Dashboard)
-      - "4318:4318"   # Порт для приема трейсов по HTTP (OTLP)
+      - "127.0.0.1:16686:16686" # ✅ Jaeger UI тоже закрываем от посторонних глаз
+      - "4318:4318"

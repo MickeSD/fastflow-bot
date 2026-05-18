@@ -337,7 +337,7 @@ async def cmd_manage_key(
         f"📊 Статус: {status}\n"
         f"📅 Истекает: <b>{key_info['next_payment_date']}</b>\n"
         f"💰 Цена: {key_info['price']}₽\n\n"
-        f"🔑 <b>Ключ:</b>\n<code>{short_key}</code>\n"
+        f"🔑 <b>Ключ:</b>\n<code>{html.escape(short_key)}</code>\n" # ✅ Безопасное экранирование html.escape
     )
 
     await message.answer(text, reply_markup=get_admin_extend_kb(key_id), parse_mode="HTML")

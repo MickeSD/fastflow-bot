@@ -12,12 +12,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-# ✅ Строгая схема валидации переменных окружения
+# строгая схема валидации переменных окружения
 class Settings(BaseSettings):
     bot_token: str = Field(alias="BOT_TOKEN")
     admin_id: int = Field(0, alias="ADMIN_ID")
     encryption_key: str = Field(alias="ENCRYPTION_KEY")
     payment_phone: str = Field("+7 (000) 000-00-00", alias="PAYMENT_PHONE")
+    metrics_token: str = Field("secure_default_token", alias="METRICS_TOKEN") # новый защитный токен
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),

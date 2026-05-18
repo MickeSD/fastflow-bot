@@ -5,21 +5,35 @@ import redis.asyncio as aioredis
 import structlog
 from prometheus_client import generate_latest
 
+from core.config import settings
 from core.di import Container
 
 logger = structlog.get_logger(__name__)
 
+
+def check_auth(request: aiohttp.web.Request) -> bool:
+    """Проверяет токен авторизации для доступа к служебным эндпоинтам."""
+    provided_token = request.headers.get("X-Metrics-Token") or request.query.get("token")
+    return provided_token == settings.metrics_token
+
+
 async def metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """Отдает метрики для Prometheus"""
-    # aiohttp требует разделять content_type и charset
+    """Отдает метрики для Prometheus с защитой авторизации."""
+    if not check_auth(request):
+        return aiohttp.web.Response(text="Unauthorized", status=401)
+
     return aiohttp.web.Response(
         body=generate_latest(),
         content_type="text/plain",
         charset="utf-8"
     )
 
+
 async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     """Глубокий health-check, верифицирующий внутренние и внешние компоненты системы."""
+    if not check_auth(request):
+        return aiohttp.web.Response(text="Unauthorized", status=401)
+
     container = request.app["container"]
     checks = {}
 

@@ -12,7 +12,7 @@ from core.config import BASE_DIR
 def sensitive_data_processor(
     logger: Any, log_method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """Маскирует UUID и токены ключей в логах"""
+    """Маскирует UUID, токены, ссылки vless и технические email клиентов в логах"""
     for key, value in event_dict.items():
         if isinstance(value, str):
             val = re.sub(
@@ -21,6 +21,8 @@ def sensitive_data_processor(
                 value,
             )
             val = re.sub(r"(vless://)[^@]+(@)", r"\1***\2", val)
+            # зачищаем технические email панелей (например, user_526485744_abcde)
+            val = re.sub(r"user_\d+(_[0-9a-fA-Za-z]+)?", "user_***_masked", val)
             event_dict[key] = val
     return event_dict
 

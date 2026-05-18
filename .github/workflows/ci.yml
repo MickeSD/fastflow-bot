@@ -39,7 +39,8 @@ jobs:
       run: poetry run pytest -v
       
     - name: Run Bandit (Python SAST)
-      run: poetry run bandit -r application/ core/ handlers/ infrastructure/ services/ -ll
+      # ✅ Сканируем весь корень проекта, исключая папки зависимостей и виртуальных сред
+      run: poetry run bandit -r . -x ./venv,./.git,./.mypy_cache,./.pytest_cache,./.ruff_cache -ll
 
   security-scan:
     runs-on: ubuntu-latest

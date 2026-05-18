@@ -12,7 +12,7 @@ from dependency_injector.wiring import Provide, inject
 from application.services.vpn import VpnService
 from core.config import ADMIN_ID, PANELS, PAYMENT_PHONE
 from core.di import Container
-from infrastructure.repositories import KeyRepository
+from infrastructure.repositories import KeyRecord, KeyRepository
 from keyboards.inline import get_confirm_unsub_kb, get_user_main_kb
 
 router = Router()
@@ -60,9 +60,9 @@ async def show_keys(
         await callback.answer()
         return
 
-    grouped_keys: dict[str, list] = {}
+    grouped_keys: dict[str, list[KeyRecord]] = {}
     for k in keys:
-        _, _, _, _, host = k
+        host = k["panel_host"]
         if host not in grouped_keys:
             grouped_keys[host] = []
         grouped_keys[host].append(k)
@@ -77,7 +77,11 @@ async def show_keys(
         text += f"<b>{server_title}</b>\n"
 
         for k in keys_list:
-            key_id, vless_key, price, date, host = k
+            key_id = k["id"]
+            vless_key = k["vless_key"]
+            price = k["price"]
+            date = k["next_payment_date"]
+
             parsed = urlparse(vless_key)
             key_name = html.escape(parsed.fragment) if parsed.fragment else "Без названия"
 

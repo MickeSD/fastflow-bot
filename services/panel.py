@@ -14,6 +14,34 @@ from core.observability import API_REQUEST_DURATION
 
 logger = structlog.get_logger(__name__)
 
+class PanelCircuitBreaker:
+    """In-memory предохранитель для предотвращения перегрузки упавших узлов 3x-ui."""
+    def __init__(self, fail_max: int = 5, reset_timeout: int = 60):
+        self.fail_max = fail_max
+        self.reset_timeout = reset_timeout
+        self.state: dict[str, dict[str, Any]] = {}  # host -> {"failures": int, "tripped_at": float}
+
+    def check(self, host: str) -> None:
+        if host not in self.state:
+            return
+        data = self.state[host]
+        if data["failures"] >= self.fail_max:
+            if time.time() - data["tripped_at"] < self.reset_timeout:
+                raise PanelOfflineError(f"🚨 Circuit Breaker активен для {host}. Узел временно заблокирован.")
+            else:
+                self.state[host] = {"failures": 0, "tripped_at": 0.0}
+
+    def record_success(self, host: str) -> None:
+        self.state[host] = {"failures": 0, "tripped_at": 0.0}
+
+    def record_failure(self, host: str) -> None:
+        if host not in self.state:
+            self.state[host] = {"failures": 0, "tripped_at": 0.0}
+        self.state[host]["failures"] += 1
+        if self.state[host]["failures"] >= self.fail_max:
+            self.state[host]["tripped_at"] = time.time()
+
+panel_breaker = PanelCircuitBreaker()
 
 class PanelAPI:
     """Одиночка (Singleton) для удержания пула соединений и куки авторизации"""
@@ -67,9 +95,14 @@ async def get_panel_session(session: aiohttp.ClientSession, panel: dict[str, Any
 async def _safe_api_request(
     panel: dict[str, Any], url: str, payload: dict[str, Any] | None = None, method: str = "POST"
 ) -> bool:
-    session = await PanelAPI.get_session()
-    start_time = time.perf_counter() # ✅ Засекаем время начала
     parsed_url = urlparse(url)
+    host = parsed_url.hostname or "unknown"
+
+    # 1. Проверяем состояние предохранителя для данного хоста
+    panel_breaker.check(host)
+
+    session = await PanelAPI.get_session()
+    start_time = time.perf_counter()
 
     try:
         if method == "POST":
@@ -83,37 +116,45 @@ async def _safe_api_request(
             if resp.status == 200:
                 res = await resp.json()
                 if res.get("success", False):
+                    panel_breaker.record_success(host)  # Сброс счетчика при успехе
                     return True
 
                 msg = str(res.get("msg", "")).lower()
-                if "delclient" in url.lower() and (
-                    "not found" in msg or "no such" in msg
-                ):
+                if "delclient" in url.lower() and ("not found" in msg or "no such" in msg):
+                    panel_breaker.record_success(host)
                     return True
 
                 logger.warning("api_request_success_false", url=url, response=res)
                 return False
 
-            elif resp.status in [401, 403, 404]:
-                logger.warning("auth_token_expired_or_missing", url=url, status=resp.status)
+            if resp.status == 401:
+                logger.warning("api_request_401_unauthorized", url=url)
+                # Пытаемся автоматически обновить сессию кук
+                auth_success = await get_panel_session(session, panel)
+                if auth_success:
+                    # Выбрасываем ошибку, чтобы декоратор @retry перезапустил этот же метод
+                    raise PanelAPIError("Сессия 3x-ui была обновлена, повторяем запрос...")
+                else:
+                    raise PanelAPIError("Критическая ошибка авторизации на панели 3x-ui")
 
-                # Идем логиниться и получать куки
-                if await get_panel_session(session, panel):
-                    # Бросаем ValueError, чтобы tenacity поймал его и сделал retry запроса (уже с куками)
-                    raise ValueError("Auth token refreshed, retrying...")
-
-                raise PanelAPIError(f"Авторизация отклонена или неверный URL (HTTP {resp.status})")
-            else:
-                raise PanelAPIError(f"Bad HTTP status: {resp.status}")
+            logger.error("api_request_bad_status", url=url, status=resp.status)
+            return False
 
     except Exception as e:
+        # Если это наш внутренний контролируемый ретрай для 401, не считаем его за сбой узла
+        if isinstance(e, PanelAPIError) and "Сессия 3x-ui была обновлена" in str(e):
+            pass
+        else:
+            panel_breaker.record_failure(host) # Фиксируем сбой предохранителем
+
         logger.warning("api_request_failed", url=url, error=str(e))
         if isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError)):
             raise PanelOfflineError(f"Сервер панели недоступен: {e}") from e
+        if isinstance(e, PanelAPIError):
+            raise e
         raise PanelAPIError(f"Сбой API: {e}") from e
-
     finally:
-        # ✅ Блок finally выполняется ВСЕГДА (даже если был return True или вылетела ошибка)
+        # Блок finally выполняется всегда (даже если был return True или вылетела ошибка)
         # Поэтому мы гарантированно запишем время выполнения запроса
         duration = time.perf_counter() - start_time
         API_REQUEST_DURATION.labels(

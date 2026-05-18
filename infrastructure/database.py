@@ -19,7 +19,7 @@ class Database:
         self._lock = asyncio.Lock()
 
     async def connect(self) -> aiosqlite.Connection:
-        """Получает или создает соединение с БД"""
+        """Получает или создает соединение с БД (Async-safe с защитой от Race Condition)."""
         async with self._lock:
             if self._conn is not None:
                 try:
@@ -32,12 +32,11 @@ class Database:
                         pass
                     self._conn = None
 
-            if self._conn is None:
-                self._conn = await aiosqlite.connect(self.db_path, timeout=10.0)
-                self._conn.row_factory = aiosqlite.Row
-                await self._conn.execute("PRAGMA journal_mode=WAL;")
-                await self._conn.execute("PRAGMA foreign_keys=ON;")
-
+            # Создаем новое соединение строго внутри критической секции lock
+            self._conn = await aiosqlite.connect(self.db_path, timeout=10.0)
+            self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA journal_mode=WAL;")
+            await self._conn.execute("PRAGMA foreign_keys=ON;")
             return self._conn
 
     async def close(self) -> None:

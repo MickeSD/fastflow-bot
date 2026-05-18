@@ -1,8 +1,11 @@
+import os
+
 import structlog
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import Counter, Histogram
 
 logger = structlog.get_logger(__name__)
@@ -14,15 +17,19 @@ API_REQUEST_DURATION = Histogram("panel_api_request_seconds", "API call duration
 BOT_ERRORS = Counter("bot_errors_total", "Total unhandled bot errors", ["error_type"])
 
 def setup_observability() -> None:
-    """Инициализация метрик и распределенной трассировки"""
-    # 1. Настройка OpenTelemetry (Трассировка)
+    """Инициализация метрик и распределенной трассировки (Jaeger)"""
     provider = TracerProvider()
-    # Пока выводим трейсы в консоль (в проде здесь будет OTLPSpanExporter для Jaeger/Zipkin)
-    processor = BatchSpanProcessor(ConsoleSpanExporter())
+
+    # Подключаем Jaeger через OTLP HTTP
+    # В Docker-сети он будет доступен по имени 'jaeger' и порту 4318
+    jaeger_endpoint = os.getenv("OTLP_ENDPOINT", "http://jaeger:4318/v1/traces")
+    otlp_exporter = OTLPSpanExporter(endpoint=jaeger_endpoint)
+
+    processor = BatchSpanProcessor(otlp_exporter)
     provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)
 
-    # 2. Авто-инструментация всех aiohttp запросов (внутри PanelAPI)
+    # Авто-инструментация всех aiohttp запросов
     AioHttpClientInstrumentor().instrument()
 
-    logger.info("Observability (Metrics & Tracing) успешно инициализирована.")
+    logger.info("Observability успешно инициализирована. Трейсы уходят в Jaeger!")

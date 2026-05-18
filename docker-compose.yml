@@ -44,3 +44,11 @@ services:
     command: python -m arq infrastructure.worker.WorkerSettings
     depends_on:
       - flow-redis
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # Web-интерфейс Jaeger (Dashboard)
+      - "4318:4318"   # Порт для приема трейсов по HTTP (OTLP)

@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 from aiohttp import ClientTimeout
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,11 +29,13 @@ class Settings(BaseSettings):
     @classmethod
     def validate_fernet(cls, v: str) -> str:
         try:
-            Fernet(v.encode())
+            # Валидируем каждый ключ, если они переданы через запятую для ротации
+            for key in v.split(","):
+                if key.strip():
+                    Fernet(key.strip().encode())
         except Exception as e:
             raise ValueError("🚨 Неверный формат ENCRYPTION_KEY для Fernet шифрования!") from e
         return v
-
 # Инициализация автоматически проверит наличие и типы всех переменных
 settings = Settings()  # type: ignore
 
@@ -41,7 +43,9 @@ BOT_TOKEN = settings.bot_token
 ADMIN_ID = settings.admin_id
 PAYMENT_PHONE = settings.payment_phone
 ENCRYPTION_KEY = settings.encryption_key
-cipher = Fernet(ENCRYPTION_KEY.encode())
+# Создаем список Fernet-инстансов для поддержки старых и новых ключей
+key_instances = [Fernet(k.strip().encode()) for k in ENCRYPTION_KEY.split(",") if k.strip()]
+cipher = MultiFernet(key_instances)
 REQUEST_TIMEOUT = ClientTimeout(total=10)
 
 PANELS = {}

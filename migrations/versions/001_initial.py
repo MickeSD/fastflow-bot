@@ -5,6 +5,8 @@ Revises:
 Create Date: 2026-05-18 10:00:00.000000
 
 """
+import os
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -43,6 +45,10 @@ def upgrade() -> None:
     op.create_index('idx_keys_is_active', 'keys', ['is_active'], unique=False)
 
 def downgrade() -> None:
+    """Безопасный откат схемы БД."""
+    if os.getenv("ENV") == "production":
+        raise RuntimeError("🚨 ФАТАЛЬНО: Выполнение downgrade запрещено в Production окружении для исключения риска удаления данных клиентов!")
+
     op.drop_index('idx_keys_is_active', table_name='keys')
     op.drop_index('idx_keys_tg_id', table_name='keys')
     op.drop_table('keys')

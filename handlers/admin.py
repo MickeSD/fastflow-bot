@@ -295,11 +295,11 @@ async def cmd_users_router(
         await message.answer(f"У пользователя {query} нет активных ключей.")
         return
 
-    total_price = sum(k[2] for k in user_keys) # price на индексе 2
+    total_price = sum(k["price"] for k in user_keys)
     text = f"👤 <b>Профиль пользователя</b> <code>{target_id}</code>\n💰 Общая сумма к оплате: <b>{total_price}₽/мес</b>\n\n🔑 <b>Активные ключи:</b>\n"
 
     for k in user_keys:
-        text += f"🔹 Ключ <code>{k[0]}</code> | Сервер: {k[4]} | До {k[3]} | {k[2]}₽\n"
+        text += f"🔹 Ключ <code>{k['id']}</code> | Сервер: {k['panel_host']} | До {k['next_payment_date']} | {k['price']}₽\n"
 
     text += "\nУправлять ключом: <code>/key ID_ключа</code>"
     await message.answer(text, parse_mode="HTML")

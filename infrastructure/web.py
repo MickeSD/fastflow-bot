@@ -1,6 +1,7 @@
 import os
 
 import aiohttp.web
+import redis.asyncio as aioredis
 import structlog
 from prometheus_client import generate_latest
 
@@ -18,15 +19,36 @@ async def metrics_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
     )
 
 async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
-    """Health-check для Docker / Kubernetes"""
-    container: Container = request.app["container"]
+    """Глубокий health-check, верифицирующий внутренние и внешние компоненты системы."""
+    container = request.app["container"]
+    checks = {}
+
+    # 1. Проверяем SQLite БД
     try:
         db = await container.db().connect()
         await db.execute("SELECT 1")
-        return aiohttp.web.json_response({"status": "ok", "database": "connected"})
+        checks["database"] = "ok"
     except Exception as e:
-        logger.error("health_check_failed", error=str(e))
-        return aiohttp.web.json_response({"status": "degraded", "database": str(e)}, status=503)
+        logger.error("health_check_db_failed", error=str(e))
+        checks["database"] = "fail"
+
+    # 2. Проверяем доступность Redis
+    try:
+        redis_host = os.getenv("REDIS_HOST", "flow-redis")
+        r_client = await aioredis.from_url(f"redis://{redis_host}:6379", socket_timeout=2)
+        await r_client.ping()
+        await r_client.close()
+        checks["redis"] = "ok"
+    except Exception as e:
+        logger.error("health_check_redis_failed", error=str(e))
+        checks["redis"] = "fail"
+
+    # Выставляем общий статус системы
+    status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    return aiohttp.web.json_response(
+        {"status": status, "checks": checks},
+        status=200 if status == "ok" else 503
+    )
 
 async def start_observability_server(container: Container, port: int = 8080) -> aiohttp.web.AppRunner:
     """Запускает фоновый HTTP-сервер для метрик и health-чеков"""

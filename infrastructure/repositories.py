@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -7,6 +7,18 @@ import aiosqlite
 from core.security import decrypt_data, encrypt_data
 from infrastructure.database import Database
 
+
+class KeyRecord(TypedDict):
+    id: int
+    tg_id: int
+    vless_key: str
+    price: int
+    next_payment_date: str
+    panel_host: str
+    inbound_id: int
+    is_active: bool
+    settings: str
+    deactivated_at: str | None
 
 class KeyRepository:
     """Единая точка входа для любых операций с таблицами users и keys"""
@@ -24,20 +36,26 @@ class KeyRepository:
                 return row_dict
             return None
 
-    async def get_user_keys(self, tg_id: int) -> list[tuple[Any, ...]]:
+    async def get_user_keys(self, tg_id: int) -> list[KeyRecord]:
+        """Возвращает список активных подписок пользователя в формате KeyRecord."""
         conn = await self.db.connect()
         async with conn.execute(
             "SELECT * FROM keys WHERE tg_id = ? AND is_active = 1", (tg_id,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [
-                (
-                    r["id"],
-                    decrypt_data(r["vless_key"]),
-                    r["price"],
-                    r["next_payment_date"],
-                    r["panel_host"],
-                )
+                {
+                    "id": r["id"],
+                    "tg_id": r["tg_id"],
+                    "vless_key": decrypt_data(r["vless_key"]),
+                    "price": r["price"],
+                    "next_payment_date": r["next_payment_date"],
+                    "panel_host": r["panel_host"],
+                    "inbound_id": r["inbound_id"],
+                    "is_active": bool(r["is_active"]),
+                    "settings": r["settings"],
+                    "deactivated_at": r["deactivated_at"],
+                }
                 for r in rows
             ]
 

@@ -17,7 +17,7 @@ class KeyRecord(TypedDict):
     panel_host: str
     inbound_id: int
     is_active: bool
-    settings: str
+    settings: str | None
     deactivated_at: str | None
 
 class KeyRepository:
@@ -33,15 +33,14 @@ class KeyRepository:
             if row:
                 row_dict = dict(row)
                 row_dict["vless_key"] = decrypt_data(row_dict["vless_key"])
+                row_dict["uuid"] = decrypt_data(row_dict["uuid"])
+                row_dict["settings"] = decrypt_data(row_dict["settings"]) if row_dict["settings"] else None
                 return row_dict
             return None
 
     async def get_user_keys(self, tg_id: int) -> list[KeyRecord]:
-        """Возвращает список активных подписок пользователя в формате KeyRecord."""
         conn = await self.db.connect()
-        async with conn.execute(
-            "SELECT * FROM keys WHERE tg_id = ? AND is_active = 1", (tg_id,)
-        ) as cursor:
+        async with conn.execute("SELECT * FROM keys WHERE tg_id = ? AND is_active = 1", (tg_id,)) as cursor:
             rows = await cursor.fetchall()
             return [
                 {
@@ -53,7 +52,7 @@ class KeyRepository:
                     "panel_host": r["panel_host"],
                     "inbound_id": r["inbound_id"],
                     "is_active": bool(r["is_active"]),
-                    "settings": r["settings"],
+                    "settings": decrypt_data(r["settings"]) if r["settings"] else None,
                     "deactivated_at": r["deactivated_at"],
                 }
                 for r in rows
@@ -105,11 +104,14 @@ class KeyRepository:
         self, tg_id: int, username: str, vless_key: str, price: int, payment_date: str, uuid: str, panel_host: str, inbound_id: int, settings: str | None = None
     ) -> None:
         conn = await self.db.connect()
+        # Вытаскиваем зашифрованные UUID и расшифровываем в памяти (защита от дублей)
         async with conn.execute(
-            "SELECT id FROM keys WHERE uuid = ? AND panel_host = ? AND is_active = 1", (uuid, panel_host)
+            "SELECT uuid FROM keys WHERE panel_host = ? AND is_active = 1", (panel_host,)
         ) as cursor:
-            if await cursor.fetchone():
-                raise ValueError(f"Активный ключ с UUID {uuid} уже существует на этом сервере!")
+            rows = await cursor.fetchall()
+            for r in rows:
+                if decrypt_data(r["uuid"]) == uuid:
+                    raise ValueError(f"Активный ключ с UUID {uuid} уже существует на этом сервере!")
 
         try:
             await conn.execute(
@@ -118,7 +120,7 @@ class KeyRepository:
             )
             await conn.execute(
                 "INSERT INTO keys (tg_id, vless_key, price, next_payment_date, uuid, panel_host, inbound_id, is_active, settings) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                (tg_id, encrypt_data(vless_key), price, payment_date, uuid, panel_host, inbound_id, settings),
+                (tg_id, encrypt_data(vless_key), price, payment_date, encrypt_data(uuid), panel_host, inbound_id, encrypt_data(settings) if settings else None),
             )
             await conn.commit()
         except Exception as e:
@@ -148,13 +150,18 @@ class KeyRepository:
             return row["username"] if row else None
 
     async def get_all_active_keys(self) -> list[dict[str, Any]]:
-        """Возвращает все активные ключи для проверки оплат (Scheduler)"""
         conn = await self.db.connect()
         async with conn.execute(
             "SELECT id, tg_id, price, next_payment_date, uuid, panel_host, inbound_id, settings FROM keys WHERE is_active = 1"
         ) as cursor:
             rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["uuid"] = decrypt_data(d["uuid"])
+                d["settings"] = decrypt_data(d["settings"]) if d["settings"] else None
+                result.append(d)
+            return result
 
     async def delete_old_inactive_keys(self, days: int = 90) -> int:
         """Удаляет ключи, которые были деактивированы более N дней назад"""

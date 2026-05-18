@@ -1,18 +1,16 @@
 import asyncio
 import glob
 import os
-import shutil
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import aiosqlite
 import structlog
 from aiogram import Bot
-from aiogram.types import FSInputFile
 
 from application.services.vpn import VpnService
 from core.config import ADMIN_ID, BASE_DIR
-from core.utils.telegram import safe_send_document, safe_send_message
+from core.utils.telegram import safe_send_message
 from infrastructure.database import Database
 from infrastructure.repositories import KeyRepository
 
@@ -66,7 +64,6 @@ async def check_payments(ctx: dict) -> None:
         await asyncio.sleep(0.1)
 
 async def backup_database(ctx: dict) -> None:
-    bot: Bot = ctx["bot"]
     db: Database = ctx["container"].db()
 
     backup_dir = BASE_DIR / "backups"
@@ -75,8 +72,6 @@ async def backup_database(ctx: dict) -> None:
     date_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y%m%d_%H%M")
     db_path = BASE_DIR / "db_data" / "vpn_database.db"
     backup_path = backup_dir / f"vpn_database_{date_str}.db"
-    log_path = BASE_DIR / "logs" / "bot.log"
-    temp_log = backup_dir / f"bot_{date_str}.log"
 
     if not db_path.exists():
         logger.error("Файл БД не найден для бэкапа!")
@@ -84,21 +79,14 @@ async def backup_database(ctx: dict) -> None:
 
     try:
         async with aiosqlite.connect(backup_path) as backup_db:
-            await db.backup(backup_db) # ✅ Магия изолированной инфраструктуры
+            await db.backup(backup_db)
 
-        await safe_send_document(bot, ADMIN_ID, FSInputFile(str(backup_path)), "📦 Нативный бэкап БД")
-
-        if log_path.exists():
-            shutil.copy2(log_path, temp_log)
-            await safe_send_document(bot, ADMIN_ID, FSInputFile(str(temp_log)), "📝 Логи")
-
-        logger.info("Бэкап успешно сформирован, сохранен локально и отправлен.")
+        # 🛑 Отправка сырой БД и логов в Telegram удалена ради безопасности!
+        # Бэкапы надежно уходят в GDrive через наш зашифрованный bash-скрипт.
+        logger.info("Локальный бэкап успешно сформирован.")
     except Exception as e:
         logger.error(f"Ошибка бэкапа: {e}")
     finally:
-        if temp_log.exists():
-            os.remove(temp_log)
-
         existing_backups = sorted(glob.glob(str(backup_dir / "vpn_database_*.db")))
         if len(existing_backups) > 7:
             for old_backup in existing_backups[:-7]:

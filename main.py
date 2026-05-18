@@ -26,19 +26,17 @@ async def on_shutdown(bot: Bot, container: Container, web_runner: aiohttp.web.Ap
     await bot.session.close()
     logger.info("Соединения безопасно закрыты.")
 
-async def main() -> None:
-    setup_logging()
-    setup_observability()
-
-    container = Container()
-    bot = Bot(token=BOT_TOKEN)
-    await container.db().init_db(bot)
-
-    # ✅ Броня: Автоматически применяем миграции БД при старте контейнера
+def run_migrations() -> None:
+    """Синхронный запуск миграций до старта асинхронного event loop."""
     logger.info("Запуск проверки миграций БД (Alembic)...")
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
     logger.info("Схема БД актуальна!")
+
+async def main() -> None:
+    container = Container()
+    bot = Bot(token=BOT_TOKEN)
+    await container.db().init_db(bot)
 
     web_runner = await start_observability_server(container, port=8080)
 
@@ -60,4 +58,12 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # 1. Сначала настраиваем логирование и трейсы
+    setup_logging()
+    setup_observability()
+
+    # 2. Выполняем миграции БД ВНЕ асинхронного цикла
+    run_migrations()
+
+    # 3. И только теперь безопасно запускаем самого бота
     asyncio.run(main())

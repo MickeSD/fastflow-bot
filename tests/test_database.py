@@ -41,7 +41,7 @@ async def test_db_backup(db_instance: Database) -> None:
     """Тест: Создание резервной копии БД"""
     mock_conn = AsyncMock()
     mock_backup_db = AsyncMock()
-    
+
     with patch.object(db_instance, 'connect', return_value=mock_conn):
         await db_instance.backup(mock_backup_db)
         mock_conn.backup.assert_called_once_with(mock_backup_db)

@@ -1,8 +1,11 @@
-import pytest
 import json
-from unittest.mock import patch, AsyncMock, MagicMock
-from infrastructure.web import metrics_handler, health_handler, check_auth
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from core.config import settings
+from infrastructure.web import check_auth, health_handler, metrics_handler
+
 
 def test_check_auth_success() -> None:
     """Тест: Успешная авторизация hmac"""
@@ -34,7 +37,7 @@ async def test_metrics_handler_unauthorized() -> None:
 async def test_health_handler_success(mock_redis: AsyncMock) -> None:
     """Тест: Успешный Health-check (БД + Redis)"""
     mock_db_connect = MagicMock()
-    mock_db_connect.execute = AsyncMock() 
+    mock_db_connect.execute = AsyncMock()
 
     mock_db_instance = MagicMock()
     mock_db_instance.connect = AsyncMock(return_value=mock_db_connect)
@@ -54,7 +57,7 @@ async def test_health_handler_success(mock_redis: AsyncMock) -> None:
     mock_redis.return_value = mock_r_client
 
     response = await health_handler(request)
-    
+
     assert response.status == 200
     # ✅ Утихомирили Mypy, гарантировав строку
     data = json.loads(response.text or "{}")

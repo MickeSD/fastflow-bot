@@ -1,7 +1,10 @@
-import pytest
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from infrastructure.repositories import KeyRepository
+
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
@@ -31,7 +34,7 @@ class FakeExecuteResult:
 async def test_get_username_found(key_repo: KeyRepository, mock_db: AsyncMock) -> None:
     mock_cursor = AsyncMock()
     mock_cursor.fetchone.return_value = {"username": "misha_dugin"}
-    
+
     mock_conn = MagicMock()
     mock_conn.execute = MagicMock(return_value=FakeExecuteResult(mock_cursor))
     mock_db.connect = AsyncMock(return_value=mock_conn)
@@ -46,7 +49,7 @@ async def test_deactivate_key(key_repo: KeyRepository, mock_db: AsyncMock) -> No
     mock_conn.execute = MagicMock(return_value=FakeExecuteResult(AsyncMock()))
     mock_conn.commit = AsyncMock()
     mock_db.connect = AsyncMock(return_value=mock_conn)
-    
+
     await key_repo.deactivate_key(99)
     mock_conn.execute.assert_called_once()
 
@@ -54,7 +57,7 @@ async def test_deactivate_key(key_repo: KeyRepository, mock_db: AsyncMock) -> No
 async def test_get_user_keys(key_repo: KeyRepository, mock_db: AsyncMock) -> None:
     mock_cursor = AsyncMock()
     mock_cursor.fetchall.return_value = [
-        {"id": 1, "tg_id": 123, "vless_key": "encoded", "price": 100, "next_payment_date": "2025-01-01", 
+        {"id": 1, "tg_id": 123, "vless_key": "encoded", "price": 100, "next_payment_date": "2025-01-01",
          "panel_host": "host", "inbound_id": 1, "is_active": 1, "settings": "{}", "deactivated_at": None}
     ]
     mock_conn = MagicMock()
@@ -66,12 +69,12 @@ async def test_get_user_keys(key_repo: KeyRepository, mock_db: AsyncMock) -> Non
 
     assert len(res) == 1
     assert res[0]["vless_key"] == "decoded"
-    
+
 @pytest.mark.asyncio
 async def test_extend_subscription(key_repo: KeyRepository, mock_db: AsyncMock) -> None:
     mock_cursor = AsyncMock()
     mock_cursor.fetchone.return_value = {"next_payment_date": "2026-05-18"}
-    
+
     mock_conn = MagicMock()
     mock_conn.execute = MagicMock(return_value=FakeExecuteResult(mock_cursor))
     mock_conn.commit = AsyncMock()
@@ -87,7 +90,7 @@ async def test_upsert_user(key_repo: KeyRepository, mock_db: AsyncMock) -> None:
     mock_conn.execute = MagicMock(return_value=FakeExecuteResult(AsyncMock()))
     mock_conn.commit = AsyncMock()
     mock_db.connect = AsyncMock(return_value=mock_conn)
-    
+
     await key_repo.upsert_user(123, "test")
     mock_conn.execute.assert_called_once()
 
@@ -98,7 +101,7 @@ async def test_get_all_active_keys(key_repo: KeyRepository, mock_db: AsyncMock) 
     mock_conn = MagicMock()
     mock_conn.execute = MagicMock(return_value=FakeExecuteResult(mock_cursor))
     mock_db.connect = AsyncMock(return_value=mock_conn)
-    
+
     res = await key_repo.get_all_active_keys()
     assert len(res) == 1
 

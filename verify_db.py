@@ -15,7 +15,7 @@ async def verify() -> None:
 
         # ✅ 1. Проверяем наличие NULL у активных ключей
         cursor = await db.execute("SELECT id FROM keys WHERE is_active = 1 AND uuid_hash IS NULL")
-        null_rows = await cursor.fetchall()
+        null_rows = list(await cursor.fetchall()) # ✅ Явно указываем mypy, что это список
         if null_rows:
             bad.append(("DB", f"Найдено {len(null_rows)} активных ключей с пустым uuid_hash!"))
 

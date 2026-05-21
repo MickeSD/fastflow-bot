@@ -4,9 +4,9 @@ from typing import AsyncGenerator
 
 import pytest
 
-from core.security import encrypt_data, get_uuid_hash
 from infrastructure.database import Database
 from infrastructure.repositories import KeyRepository
+
 
 @pytest.fixture
 async def real_db() -> AsyncGenerator[Database, None]:
@@ -16,7 +16,7 @@ async def real_db() -> AsyncGenerator[Database, None]:
 
     db = Database(path)
     conn = await db.connect()
-    
+
     # Имитируем миграции Alembic (создаем реальную структуру)
     await conn.execute("CREATE TABLE users (tg_id INTEGER PRIMARY KEY, username TEXT)")
     await conn.execute("""
@@ -43,11 +43,11 @@ def repo(real_db: Database) -> KeyRepository:
 @pytest.mark.asyncio
 async def test_add_key_integration_and_race_condition(repo: KeyRepository) -> None:
     """Тест: Успешное добавление и аппаратная защита SQLite от дублей."""
-    
+
     # 1. Успешное добавление первого ключа
     await repo.add_key(
-        tg_id=123, username="test_user", vless_key="vless://...", 
-        price=100, payment_date="2026-10-10", uuid="test-uuid-1", 
+        tg_id=123, username="test_user", vless_key="vless://...",
+        price=100, payment_date="2026-10-10", uuid="test-uuid-1",
         panel_host="host1", inbound_id=1, settings="{}"
     )
     keys = await repo.get_user_keys(123)
@@ -58,7 +58,7 @@ async def test_add_key_integration_and_race_condition(repo: KeyRepository) -> No
     # База должна отбить его на уровне UNIQUE constraints!
     with pytest.raises(ValueError, match="уже существует на этом сервере"):
         await repo.add_key(
-            tg_id=999, username="hacker", vless_key="vless://fake", 
+            tg_id=999, username="hacker", vless_key="vless://fake",
             price=0, payment_date="2026-10-10", uuid="test-uuid-1", # Тот же UUID!
             panel_host="host1", inbound_id=1, settings="{}"
         )

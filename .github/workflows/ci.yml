@@ -34,7 +34,9 @@ jobs:
       run: |
         echo "BOT_TOKEN=test_token" >> $GITHUB_ENV
         echo "ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> $GITHUB_ENV
-
+        echo "METRICS_TOKEN=super_secret_dummy_metrics_token_for_github_actions" >> $GITHUB_ENV
+        echo "UUID_HASH_SECRET=super_secret_dummy_uuid_hash_secret_for_github_actions" >> $GITHUB_ENV
+        
     - name: Run Pytest with Coverage
       run: poetry run pytest -v
       

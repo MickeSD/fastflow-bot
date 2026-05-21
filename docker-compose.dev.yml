@@ -1,0 +1,32 @@
+services:
+  flow-app:
+    build: .
+    container_name: flow_app_dev
+    environment:
+      OBSERVABILITY_HOST: "0.0.0.0"
+      REDIS_PASSWORD: "dev_password"
+    env_file:
+      - .env
+    volumes:
+      - ./db_data:/app/db_data
+      - ./logs:/app/logs
+      - .:/app  # ✅ Код синхронизируется в реальном времени!
+    ports:
+      - "8080:8080"
+    depends_on:
+      - flow-redis
+    networks:
+      - dev-net
+
+  flow-redis:
+    image: redis:7-alpine
+    container_name: flow_redis_dev
+    command: redis-server --requirepass dev_password
+    ports:
+      - "6379:6379" # ✅ Открыто для удобной отладки базы сессий
+    networks:
+      - dev-net
+
+networks:
+  dev-net:
+    driver: bridge

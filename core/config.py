@@ -15,14 +15,23 @@ class Settings(BaseSettings):
     admin_id: int = Field(0, alias="ADMIN_ID")
     encryption_key: str = Field(alias="ENCRYPTION_KEY")
     payment_phone: str = Field("+7 (000) 000-00-00", alias="PAYMENT_PHONE")
-    metrics_token: str = Field("secure_default_token", alias="METRICS_TOKEN")
+
+    # ✅ Новые секреты без дефолтных значений
+    metrics_token: str = Field(alias="METRICS_TOKEN")
+    uuid_hash_secret: str = Field(alias="UUID_HASH_SECRET")
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
-        # ✅ Оставляем "allow", иначе Pydantic упадет из-за динамических переменных PANEL_*_HOST!
         extra="allow"
     )
+
+    @field_validator("metrics_token", "uuid_hash_secret")
+    @classmethod
+    def validate_lengths(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError("🚨 Секреты (METRICS_TOKEN и UUID_HASH_SECRET) должны быть не короче 32 символов!")
+        return v
 
     @field_validator("encryption_key")
     @classmethod

@@ -1,13 +1,13 @@
 import os
 
-# Папки, которые нейросети читать не нужно (добавили .ruff_cache)
-IGNORE_DIRS = {'venv', '.git', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'backups'}
+# Папки, которые нейросети читать не нужно (добавили db_data и logs)
+IGNORE_DIRS = {'venv', '.git', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'backups', 'db_data', 'logs'}
 
-# Расширения, которые нам важны
-ALLOWED_EXTENSIONS = {'.py', '.toml', '.yml', '.yaml', '.md', '.env.example'}
+# Расширения, которые нам важны (добавили .ini для alembic)
+ALLOWED_EXTENSIONS = {'.py', '.toml', '.yml', '.yaml', '.md', '.env.example', '.ini'}
 
 # Конкретные файлы без расширений, которые тоже нужны
-ALLOWED_FILES = {'Dockerfile', '.dockerignore'}
+ALLOWED_FILES = {'Dockerfile', '.dockerignore', '.gitignore', 'requirements.txt'}
 
 with open("full_project.txt", "w", encoding="utf-8") as outfile:
     for root, dirs, files in os.walk("."):
@@ -18,7 +18,7 @@ with open("full_project.txt", "w", encoding="utf-8") as outfile:
             if any(file.endswith(ext) for ext in ALLOWED_EXTENSIONS) or file in ALLOWED_FILES:
                 filepath = os.path.join(root, file)
 
-                # Пропускаем сам скрипт и итоговый файл, чтобы не дублировать код
+                # Пропускаем сам скрипт и итоговый файл
                 if file in ["pack.py", "full_project.txt"]:
                     continue
 

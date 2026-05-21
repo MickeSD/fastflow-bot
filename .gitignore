@@ -18,13 +18,15 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.pyc
+
 
 # Логи, бэкапы и текстовые отчеты
 bot.log
 *.log
 backups/
 *.txt
-
+db.data/
 # Отчеты о покрытии тестами
 .coverage
 coverage.xml

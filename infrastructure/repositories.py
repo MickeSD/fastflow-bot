@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from core.security import decrypt_data, encrypt_data
+from core.security import decrypt_data, encrypt_data, get_uuid_hash
 from infrastructure.database import Database
 
 
@@ -104,28 +104,26 @@ class KeyRepository:
         self, tg_id: int, username: str, vless_key: str, price: int, payment_date: str, uuid: str, panel_host: str, inbound_id: int, settings: str | None = None
     ) -> None:
         conn = await self.db.connect()
-        # Вытаскиваем зашифрованные UUID и расшифровываем в памяти (защита от дублей)
-        async with conn.execute(
-            "SELECT uuid FROM keys WHERE panel_host = ? AND is_active = 1", (panel_host,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            for r in rows:
-                if decrypt_data(r["uuid"]) == uuid:
-                    raise ValueError(f"Активный ключ с UUID {uuid} уже существует на этом сервере!")
+        uuid_hash = get_uuid_hash(uuid)
 
         try:
             await conn.execute(
                 "INSERT INTO users (tg_id, username) VALUES (?, ?) ON CONFLICT(tg_id) DO UPDATE SET username=excluded.username",
                 (tg_id, username),
             )
+            # Вставляем uuid_hash вместе с остальными данными
             await conn.execute(
-                "INSERT INTO keys (tg_id, vless_key, price, next_payment_date, uuid, panel_host, inbound_id, is_active, settings) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-                (tg_id, encrypt_data(vless_key), price, payment_date, encrypt_data(uuid), panel_host, inbound_id, encrypt_data(settings) if settings else None),
+                "INSERT INTO keys (tg_id, vless_key, price, next_payment_date, uuid, panel_host, inbound_id, is_active, settings, uuid_hash) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (tg_id, encrypt_data(vless_key), price, payment_date, encrypt_data(uuid), panel_host, inbound_id, encrypt_data(settings) if settings else None, uuid_hash),
             )
             await conn.commit()
-        except Exception as e:
+
+        except aiosqlite.IntegrityError as e:
             await conn.rollback()
-            raise e
+            # ✅ Проверяем, что сработал именно наш уникальный индекс, а не какая-то другая ошибка БД
+            if "keys.panel_host, keys.uuid_hash" in str(e) or "UNIQUE" in str(e):
+                raise ValueError(f"Активный ключ с UUID {uuid} уже существует на этом сервере!") from e
+            raise e # Если это другая ошибка БД — бросаем её дальше
 
     async def get_id_by_username(self, username: str) -> int | None:
         conn = await self.db.connect()
@@ -162,6 +160,15 @@ class KeyRepository:
                 d["settings"] = decrypt_data(d["settings"]) if d["settings"] else None
                 result.append(d)
             return result
+
+    async def get_active_payment_rows(self) -> list[dict[str, Any]]:
+        """Легкий метод для планировщика: без расшифровки секретов"""
+        conn = await self.db.connect()
+        async with conn.execute(
+            "SELECT id, tg_id, price, next_payment_date FROM keys WHERE is_active = 1"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
 
     async def delete_old_inactive_keys(self, days: int = 90) -> int:
         """Удаляет ключи, которые были деактивированы более N дней назад"""

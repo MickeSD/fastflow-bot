@@ -8,6 +8,7 @@ import structlog
 
 from core.config import BASE_DIR
 
+SENSITIVE_KEYS = {"password", "pass", "token", "secret", "key", "settings", "id", "uuid", "email", "vless", "url"}
 
 class AdminActionFilter(logging.Filter):
     """Фильтр, который пропускает только события аудита администратора"""
@@ -18,23 +19,30 @@ class AdminActionFilter(logging.Filter):
         return '"event": "admin_' in str(record.msg)
 
 
+def recursive_sanitize(data: Any, current_key: str = "") -> Any:
+    """Рекурсивно обходит словари и списки, маскируя секреты."""
+    if isinstance(data, dict):
+        return {k: recursive_sanitize(v, str(k)) for k, v in data.items()}
+    elif isinstance(data, (list, tuple)):
+        return type(data)(recursive_sanitize(v, current_key) for v in data)
+    elif isinstance(data, str):
+        # Если название ключа намекает на секрет - скрываем полностью
+        if current_key.lower() in SENSITIVE_KEYS:
+            return "***-MASKED-***"
+
+        clean_val = data.replace("\n", " ").replace("\r", " ")
+        val = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "***-UUID-***", clean_val)
+        val = re.sub(r"(vless://)[^@]+(@)", r"\1***\2", val)
+        val = re.sub(r"user_\d+(_[0-9a-fA-Za-z]+)?", "user_***_masked", val)
+        return val
+    return data
+
 def sensitive_data_processor(
     logger: Any, log_method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:
-    """Маскирует персональные данные и предотвращает Log Injection"""
-    for key, value in event_dict.items():
-        if isinstance(value, str):
-            # ✅ Санитизация логов: заменяем переводы строк на безопасные пробелы
-            clean_val = value.replace("\n", " ").replace("\r", " ")
-
-            val = re.sub(
-                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-                "***-UUID-***",
-                clean_val,
-            )
-            val = re.sub(r"(vless://)[^@]+(@)", r"\1***\2", val)
-            val = re.sub(r"user_\d+(_[0-9a-fA-Za-z]+)?", "user_***_masked", val)
-            event_dict[key] = val
+    """Маскирует персональные данные и предотвращает Log Injection (рекурсивно)"""
+    for key, value in list(event_dict.items()):
+        event_dict[key] = recursive_sanitize(value, key)
     return event_dict
 
 

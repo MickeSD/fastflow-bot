@@ -46,6 +46,7 @@ async def main() -> None:
     dp.shutdown.register(on_shutdown)
 
     dp.message.middleware(ThrottlingMiddleware())
+    dp.callback_query.middleware(ThrottlingMiddleware())
 
     # ✅ Подключаем роутер ошибок ПЕРВЫМ, чтобы он перехватывал всё
     dp.include_router(error_handler.router)

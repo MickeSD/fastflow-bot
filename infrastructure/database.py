@@ -66,4 +66,10 @@ class Database:
             # ✅ Фикс: Выбрасываем исключение
             raise RuntimeError(f"FATAL: Неверный формат ENCRYPTION_KEY! Ошибка: {e}") from e
 
+        conn = await self.connect()
+        async with conn.execute("SELECT COUNT(id) FROM keys WHERE is_active = 1 AND uuid_hash IS NULL") as cursor:
+            row = await cursor.fetchone()
+            if row and row[0] > 0:
+                raise RuntimeError(f"🚨 ФАТАЛЬНО: Найдено {row[0]} активных ключей без uuid_hash! Сначала выполните fill_hashes.py")
+
         logger.info("Подключение к БД успешно проверено.")

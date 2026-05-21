@@ -15,8 +15,8 @@ logger = structlog.get_logger(__name__)
 
 def check_auth(request: aiohttp.web.Request) -> bool:
     """Проверяет токен авторизации для доступа к служебным эндпоинтам с защитой от тайминг-атак."""
-    provided_token = request.headers.get("X-Metrics-Token") or request.query.get("token") or ""
-    # ✅ Переводим в байты для строгого константного времени сравнения
+    # ✅ ИСПРАВЛЕНИЕ: Принимаем токен ТОЛЬКО через защищенный заголовок, никаких URL-параметров.
+    provided_token = request.headers.get("X-Metrics-Token") or ""
     return hmac.compare_digest(provided_token.encode('utf-8'), settings.metrics_token.encode('utf-8'))
 
 

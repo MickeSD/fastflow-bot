@@ -23,7 +23,7 @@ async def check_payments(ctx: dict) -> None:
     vpn_service: VpnService = ctx["container"].vpn_service()
 
     today = datetime.now(ZoneInfo("Europe/Moscow")).date()
-    keys = await key_repo.get_all_active_keys()
+    keys = await key_repo.get_active_payment_rows()
 
     for key in keys:
         key_id = key["id"]

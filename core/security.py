@@ -1,7 +1,10 @@
+import hashlib
+import hmac
+
 import structlog
 from cryptography.fernet import InvalidToken
 
-from core.config import cipher
+from core.config import cipher, settings  # ✅ Добавили settings для соли
 from core.exceptions import DecryptionError
 
 logger = structlog.get_logger(__name__)
@@ -24,3 +27,11 @@ def decrypt_data(text: str) -> str:
     except Exception as e:
         logger.warning(f"⚠️ Ошибка расшифровки: {e}")
         raise DecryptionError(f"Ошибка расшифровки: {e}") from e
+
+def get_uuid_hash(uuid: str) -> str:
+    """Создает детерминированный HMAC-хеш для безопасного поиска дублей на уровне БД."""
+    if not uuid:
+        return ""
+    # ✅ Используем независимый секрет, ротация Fernet-ключей больше ничего не сломает!
+    secret_key = settings.uuid_hash_secret.encode()
+    return hmac.new(secret_key, uuid.encode(), hashlib.sha256).hexdigest()

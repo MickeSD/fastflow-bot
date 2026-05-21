@@ -143,6 +143,10 @@ async def _safe_api_request(
                 else:
                     raise PanelAPIError("Критическая ошибка авторизации на панели 3x-ui")
 
+            # ✅ ИСПРАВЛЕНИЕ: 5xx ошибки теперь включают предохранитель и ретраи
+            if resp.status >= 500:
+                raise PanelAPIError(f"HTTP {resp.status}: Внутренняя ошибка панели")
+
             logger.error("api_request_bad_status", url=url, status=resp.status)
             return False
 
@@ -242,15 +246,19 @@ async def delete_client_from_panel(
         ),
     }
 
-    # Сначала пробуем POST, если панель вернула 405 Method Not Allowed - пробуем DELETE
+    # ✅ ИСПРАВЛЕНИЕ: Гарантированный Fallback с POST на DELETE
     try:
-        return await _safe_api_request(panel, del_url, payload, method="POST")
+        success = await _safe_api_request(panel, del_url, payload, method="POST")
+        if success:
+            return True
     except Exception:
-        try:
-            return await _safe_api_request(panel, del_url, payload, method="DELETE")
-        except Exception as e:
-            logger.error(f"❌ Сервер {panel_host} недоступен для удаления клиента: {e}")
-            return False
+        pass
+
+    try:
+        return await _safe_api_request(panel, del_url, payload, method="DELETE")
+    except Exception as e:
+        logger.error(f"❌ Сервер {panel_host} недоступен для удаления клиента: {e}")
+        return False
 
 async def inbound_exists(panel_host: str, inbound_id: int) -> bool | None:
     """Проверяет существование подключения (inbound) на панели.

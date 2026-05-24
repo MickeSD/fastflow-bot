@@ -194,3 +194,38 @@ class KeyRepository:
         await conn.commit()
 
         return deleted
+
+    async def update_vless_key(self, key_id: int, new_vless_key: str) -> None:
+        """Обновляет ссылку на ключ конкретного пользователя."""
+        conn = await self.db.connect()
+        await conn.execute(
+            "UPDATE keys SET vless_key = ? WHERE id = ?",
+            (encrypt_data(new_vless_key), key_id)
+        )
+        await conn.commit()
+
+    async def bulk_replace_in_keys(self, old_str: str, new_str: str) -> list[tuple[int, int]]:
+        """Массовая замена подстроки (например, IP на SNI) во всех активных ключах."""
+        conn = await self.db.connect()
+        cursor = await conn.execute("SELECT id, tg_id, vless_key FROM keys WHERE is_active = 1")
+        rows = await cursor.fetchall()
+
+        updated_keys = []
+        for r in rows:
+            key_id = r["id"]
+            tg_id = r["tg_id"]
+            current_key = decrypt_data(r["vless_key"])
+
+            # Если искомая строка есть в ссылке — меняем и перезаписываем
+            if old_str in current_key:
+                new_key = current_key.replace(old_str, new_str)
+                await conn.execute(
+                    "UPDATE keys SET vless_key = ? WHERE id = ?",
+                    (encrypt_data(new_key), key_id)
+                )
+                updated_keys.append((key_id, tg_id))
+
+        if updated_keys:
+            await conn.commit()
+
+        return updated_keys

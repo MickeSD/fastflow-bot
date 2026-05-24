@@ -1,3 +1,4 @@
+import asyncio
 import html
 import json
 import os
@@ -6,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 import structlog
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -253,6 +254,94 @@ async def process_extend(
     success, status_msg = await vpn_service.extend_key(key_id, days)
     await callback.answer(status_msg, show_alert=True)
 
+@router.message(Command("replace_key"))
+@inject
+async def cmd_replace_key(
+    message: Message,
+    bot: Bot,
+    key_repo: KeyRepository = Provide[Container.key_repo]
+) -> None:
+    """Точечная замена ключа конкретному юзеру"""
+    if not message.text or not message.from_user: return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Использование: <code>/replace_key ID_ключа vless://новый_ключ...</code>", parse_mode="HTML")
+        return
+
+    key_id_str, new_key = parts[1], parts[2]
+    if not key_id_str.isdigit():
+        return await message.answer("❌ ID ключа должен быть числом.")
+
+    key_id = int(key_id_str)
+    key_info = await key_repo.get_key_info(key_id)
+
+    if not key_info:
+        return await message.answer("❌ Ключ не найден.")
+
+    await key_repo.update_vless_key(key_id, new_key)
+    await message.answer(f"✅ Ключ <b>{key_id}</b> успешно обновлен в базе!", parse_mode="HTML")
+
+    # Уведомляем пользователя
+    tg_id = key_info["tg_id"]
+    try:
+        await bot.send_message(
+            tg_id,
+            f"🔄 <b>Твой VPN ключ (ID: {key_id}) был обновлен администратором!</b>\n\n"
+            f"Скопируй и импортируй новую ссылку:\n<code>{new_key}</code>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.answer(f"⚠️ Ключ изменен, но юзеру не удалось отправить уведомление (возможно, он заблокировал бота): {e}")
+
+
+@router.message(Command("replace_all"))
+@inject
+async def cmd_replace_all(
+    message: Message,
+    bot: Bot,
+    key_repo: KeyRepository = Provide[Container.key_repo]
+) -> None:
+    """Глобальная замена текста (IP/домена) во всех активных ключах"""
+    if not message.text or not message.from_user: return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "Использование: <code>/replace_all СТАРОЕ_ЗНАЧЕНИЕ НОВОЕ_ЗНАЧЕНИЕ</code>\n"
+            "Пример: <code>/replace_all 89.169.55.121 fastflow-de.duckdns.org</code>", 
+            parse_mode="HTML"
+        )
+        return
+
+    old_str, new_str = parts[1], parts[2]
+    status_msg = await message.answer(f"⏳ Начинаю поиск и замену <code>{html.escape(old_str)}</code> на <code>{html.escape(new_str)}</code>...", parse_mode="HTML")
+
+    updated_keys = await key_repo.bulk_replace_in_keys(old_str, new_str)
+
+    if not updated_keys:
+        return await status_msg.edit_text("ℹ️ Совпадений не найдено. Ни один ключ не изменен.")
+
+    await status_msg.edit_text(f"✅ Успешно обновлено ссылок: <b>{len(updated_keys)}</b>.\nРассылаю уведомления пользователям...", parse_mode="HTML")
+
+    # Массовая рассылка уведомлений (с защитой от дублей, если у юзера несколько ключей)
+    notified = set()
+    for key_id, tg_id in updated_keys:
+        if tg_id not in notified:
+            try:
+                await bot.send_message(
+                    tg_id,
+                    "⚙️ <b>Технические работы на сервере</b>\n\n"
+                    "Администратор обновил параметры подключения. Ваши ключи были изменены для обхода блокировок.\n\n"
+                    "Пожалуйста, зайдите в <b>🔑 Мои подписки</b> (через команду /start), скопируйте новые ключи и обновите их в своем приложении.",
+                    parse_mode="HTML"
+                )
+                notified.add(tg_id)
+                await asyncio.sleep(0.05) # Крошечная пауза для защиты от лимитов Telegram
+            except Exception:
+                pass
+
+    await message.answer(f"✅ Рассылка завершена. Уведомлено пользователей: <b>{len(notified)}</b>.", parse_mode="HTML")
 
 @router.message(Command("users"))
 @inject

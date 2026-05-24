@@ -89,7 +89,7 @@ async def show_keys(
                 f"  {local_id_counter}. 🏷 <b>{key_name}</b>\n"
                 f"     📅 До: <code>{date}</code>\n"
                 f"     💰 Цена: {price}₽\n"
-                f"     🔗 <code>{vless_key[:25]}...</code>\n\n"
+                f"     🔗 <code>{vless_key}</code>\n\n"
             )
 
             builder.button(text=f"❌ Отказаться от №{local_id_counter} ({key_name[:10]})", callback_data=f"user_unsub_{key_id}")

@@ -262,7 +262,8 @@ async def cmd_replace_key(
     key_repo: KeyRepository = Provide[Container.key_repo]
 ) -> None:
     """Точечная замена ключа конкретному юзеру"""
-    if not message.text or not message.from_user: return
+    if not message.text or not message.from_user:
+        return
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -271,13 +272,15 @@ async def cmd_replace_key(
 
     key_id_str, new_key = parts[1], parts[2]
     if not key_id_str.isdigit():
-        return await message.answer("❌ ID ключа должен быть числом.")
+        await message.answer("❌ ID ключа должен быть числом.")
+        return
 
     key_id = int(key_id_str)
     key_info = await key_repo.get_key_info(key_id)
 
     if not key_info:
-        return await message.answer("❌ Ключ не найден.")
+        await message.answer("❌ Ключ не найден.")
+        return
 
     await key_repo.update_vless_key(key_id, new_key)
     await message.answer(f"✅ Ключ <b>{key_id}</b> успешно обновлен в базе!", parse_mode="HTML")
@@ -303,13 +306,14 @@ async def cmd_replace_all(
     key_repo: KeyRepository = Provide[Container.key_repo]
 ) -> None:
     """Глобальная замена текста (IP/домена) во всех активных ключах"""
-    if not message.text or not message.from_user: return
+    if not message.text or not message.from_user:
+        return
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
         await message.answer(
             "Использование: <code>/replace_all СТАРОЕ_ЗНАЧЕНИЕ НОВОЕ_ЗНАЧЕНИЕ</code>\n"
-            "Пример: <code>/replace_all 89.169.55.121 fastflow-de.duckdns.org</code>", 
+            "Пример: <code>/replace_all 89.169.55.121 fastflow-de.duckdns.org</code>",
             parse_mode="HTML"
         )
         return
@@ -320,13 +324,14 @@ async def cmd_replace_all(
     updated_keys = await key_repo.bulk_replace_in_keys(old_str, new_str)
 
     if not updated_keys:
-        return await status_msg.edit_text("ℹ️ Совпадений не найдено. Ни один ключ не изменен.")
+        await status_msg.edit_text("ℹ️ Совпадений не найдено. Ни один ключ не изменен.")
+        return
 
     await status_msg.edit_text(f"✅ Успешно обновлено ссылок: <b>{len(updated_keys)}</b>.\nРассылаю уведомления пользователям...", parse_mode="HTML")
 
     # Массовая рассылка уведомлений (с защитой от дублей, если у юзера несколько ключей)
     notified = set()
-    for key_id, tg_id in updated_keys:
+    for _key_id, tg_id in updated_keys:
         if tg_id not in notified:
             try:
                 await bot.send_message(

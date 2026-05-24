@@ -9,6 +9,7 @@ services:
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
+    read_only: true
     volumes:
       - ./db_data:/app/db_data
       - ./backups:/app/backups
@@ -55,6 +56,7 @@ services:
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
+    read_only: true
     volumes:
       - ./db_data:/app/db_data
       - ./backups:/app/backups

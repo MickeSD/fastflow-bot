@@ -1,4 +1,3 @@
-import asyncio
 import html
 import json
 import os
@@ -17,6 +16,7 @@ from dependency_injector.wiring import Provide, inject
 from application.services.vpn import VpnService
 from core.config import ADMIN_ID, PANELS
 from core.di import Container
+from core.utils.telegram import safe_send_message
 from infrastructure.repositories import KeyRepository
 from keyboards.inline import get_admin_extend_kb
 
@@ -283,19 +283,20 @@ async def cmd_replace_key(
         return
 
     await key_repo.update_vless_key(key_id, new_key)
+
+    # ✅ Обязательный аудит
+    logger.info("admin_action_replace_key", admin_id=message.from_user.id, key_id=key_id)
     await message.answer(f"✅ Ключ <b>{key_id}</b> успешно обновлен в базе!", parse_mode="HTML")
 
-    # Уведомляем пользователя
+    # ✅ Безопасная отправка
     tg_id = key_info["tg_id"]
-    try:
-        await bot.send_message(
-            tg_id,
-            f"🔄 <b>Твой VPN ключ (ID: {key_id}) был обновлен администратором!</b>\n\n"
-            f"Скопируй и импортируй новую ссылку:\n<code>{new_key}</code>",
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        await message.answer(f"⚠️ Ключ изменен, но юзеру не удалось отправить уведомление (возможно, он заблокировал бота): {e}")
+    notification_text = (
+        f"🔄 <b>Твой VPN ключ (ID: {key_id}) был обновлен администратором!</b>\n\n"
+        f"Скопируй и импортируй новую ссылку:\n<code>{new_key}</code>"
+    )
+    sent = await safe_send_message(bot, tg_id, notification_text)
+    if not sent:
+        await message.answer(f"⚠️ Ключ изменен, но юзеру {tg_id} не удалось доставить сообщение.")
 
 
 @router.message(Command("replace_all"))
@@ -319,6 +320,12 @@ async def cmd_replace_all(
         return
 
     old_str, new_str = parts[1], parts[2]
+
+    # ✅ Предохранитель от случайного уничтожения базы
+    if len(old_str) < 5:
+        await message.answer("❌ В целях безопасности заменяемая строка должна содержать не менее 5 символов.")
+        return
+
     status_msg = await message.answer(f"⏳ Начинаю поиск и замену <code>{html.escape(old_str)}</code> на <code>{html.escape(new_str)}</code>...", parse_mode="HTML")
 
     updated_keys = await key_repo.bulk_replace_in_keys(old_str, new_str)
@@ -327,24 +334,21 @@ async def cmd_replace_all(
         await status_msg.edit_text("ℹ️ Совпадений не найдено. Ни один ключ не изменен.")
         return
 
+    # ✅ Обязательный аудит
+    logger.info("admin_action_replace_all", admin_id=message.from_user.id, old_str=old_str, new_str=new_str, affected_count=len(updated_keys))
     await status_msg.edit_text(f"✅ Успешно обновлено ссылок: <b>{len(updated_keys)}</b>.\nРассылаю уведомления пользователям...", parse_mode="HTML")
 
-    # Массовая рассылка уведомлений (с защитой от дублей, если у юзера несколько ключей)
+    # ✅ Массовая рассылка через нашу безопасную функцию (сама обойдет лимиты ТГ)
     notified = set()
     for _key_id, tg_id in updated_keys:
         if tg_id not in notified:
-            try:
-                await bot.send_message(
-                    tg_id,
-                    "⚙️ <b>Технические работы на сервере</b>\n\n"
-                    "Администратор обновил параметры подключения. Ваши ключи были изменены для обхода блокировок.\n\n"
-                    "Пожалуйста, зайдите в <b>🔑 Мои подписки</b> (через команду /start), скопируйте новые ключи и обновите их в своем приложении.",
-                    parse_mode="HTML"
-                )
-                notified.add(tg_id)
-                await asyncio.sleep(0.05) # Крошечная пауза для защиты от лимитов Telegram
-            except Exception:
-                pass
+            text = (
+                "⚙️ <b>Технические работы на сервере</b>\n\n"
+                "Администратор обновил параметры подключения. Твои ключи были изменены для обхода блокировок.\n\n"
+                "Пожалуйста, зайди в <b>🔑 Мои подписки</b> (через команду /start), скопируй новые ключи и обнови их в своем приложении."
+            )
+            await safe_send_message(bot, tg_id, text)
+            notified.add(tg_id)
 
     await message.answer(f"✅ Рассылка завершена. Уведомлено пользователей: <b>{len(notified)}</b>.", parse_mode="HTML")
 

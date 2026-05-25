@@ -3,10 +3,12 @@ from typing import Any, TypedDict
 from zoneinfo import ZoneInfo
 
 import aiosqlite
+import structlog
 
 from core.security import decrypt_data, encrypt_data, get_uuid_hash
 from infrastructure.database import Database
 
+logger = structlog.get_logger(__name__)
 
 class KeyRecord(TypedDict):
     id: int
@@ -207,7 +209,8 @@ class KeyRepository:
     async def bulk_replace_in_keys(self, old_str: str, new_str: str) -> list[tuple[int, int]]:
         """Массовая замена подстроки (например, IP на SNI) во всех активных ключах."""
         conn = await self.db.connect()
-        cursor = await conn.execute("SELECT id, tg_id, vless_key FROM keys WHERE is_active = 1")
+        # ✅ ИСПРАВЛЕНИЕ 1: Теперь извлекаем и panel_host
+        cursor = await conn.execute("SELECT id, tg_id, vless_key, panel_host FROM keys WHERE is_active = 1")
         rows = await cursor.fetchall()
 
         updated_keys = []
@@ -215,13 +218,16 @@ class KeyRepository:
             key_id = r["id"]
             tg_id = r["tg_id"]
             current_key = decrypt_data(r["vless_key"])
+            panel_host = r["panel_host"]
 
-            # Если искомая строка есть в ссылке — меняем и перезаписываем
-            if old_str in current_key:
+            # ✅ ИСПРАВЛЕНИЕ 2: Проверяем и саму ссылку, и IP сервера в базе
+            if old_str in current_key or old_str == panel_host:
                 new_key = current_key.replace(old_str, new_str)
+                new_panel_host = new_str if old_str == panel_host else panel_host
+
                 await conn.execute(
-                    "UPDATE keys SET vless_key = ? WHERE id = ?",
-                    (encrypt_data(new_key), key_id)
+                    "UPDATE keys SET vless_key = ?, panel_host = ? WHERE id = ?",
+                    (encrypt_data(new_key), new_panel_host, key_id)
                 )
                 updated_keys.append((key_id, tg_id))
 
@@ -229,3 +235,35 @@ class KeyRepository:
             await conn.commit()
 
         return updated_keys
+
+    async def rotate_encryption(self) -> int:
+        """Перешифровывает все данные актуальным (первым) ключом из ENCRYPTION_KEY."""
+        conn = await self.db.connect()
+        cursor = await conn.execute("SELECT id, vless_key, uuid, settings FROM keys")
+        rows = await cursor.fetchall()
+
+        updated = 0
+        for r in rows:
+            key_id = r["id"]
+            try:
+                # decrypt_data прочитает любым валидным ключом из старых
+                raw_vless = decrypt_data(r["vless_key"]) if r["vless_key"] else None
+                raw_uuid = decrypt_data(r["uuid"]) if r["uuid"] else None
+                raw_settings = decrypt_data(r["settings"]) if r["settings"] else None
+
+                # encrypt_data всегда использует ПЕРВЫЙ (самый новый) ключ
+                await conn.execute(
+                    "UPDATE keys SET vless_key = ?, uuid = ?, settings = ? WHERE id = ?",
+                    (
+                        encrypt_data(raw_vless) if raw_vless else None,
+                        encrypt_data(raw_uuid) if raw_uuid else None,
+                        encrypt_data(raw_settings) if raw_settings else None,
+                        key_id
+                    )
+                )
+                updated += 1
+            except Exception as e:
+                logger.error(f"Сбой перешифровки ключа {key_id}: {e}")
+
+        await conn.commit()
+        return updated

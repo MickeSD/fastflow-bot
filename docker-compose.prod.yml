@@ -4,12 +4,14 @@ services:
     container_name: flow_app
     restart: unless-stopped
     user: "65532:65532"
+    read_only: true
+    tmpfs:                 # ✅ Временная память для работы библиотек
+      - /tmp
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
-    read_only: true
     volumes:
       - ./db_data:/app/db_data
       - ./backups:/app/backups
@@ -51,12 +53,14 @@ services:
     container_name: flow_worker
     restart: unless-stopped
     user: "65532:65532"
+    read_only: true        # ✅ Запрет записи
+    tmpfs:
+      - /tmp
     environment:
       OBSERVABILITY_HOST: "0.0.0.0"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     env_file:
       - .env
-    read_only: true
     volumes:
       - ./db_data:/app/db_data
       - ./backups:/app/backups

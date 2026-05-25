@@ -1,7 +1,8 @@
 import html
 import json
-import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
+from io import BytesIO
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
@@ -10,7 +11,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from dependency_injector.wiring import Provide, inject
 
 from application.services.vpn import VpnService
@@ -375,19 +376,10 @@ async def cmd_users_router(
             report += f"ID: {u['tg_id']} | @{safe_username} | Ключей: {u['keys_count']} | Сумма: {u['total_price']}₽\n"
 
         if len(report) > 3500:
-            import time
-
-            from core.config import BASE_DIR
-            file_path = BASE_DIR / f"users_report_{message.from_user.id}_{int(time.time())}.txt"
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(report)
-                await message.answer_document(FSInputFile(str(file_path)), caption="👥 Список пользователей слишком длинный. Выгружен файлом.")
-            except Exception as e:
-                await message.answer(f"❌ Ошибка отправки файла: {e}")
-            finally:
-                if file_path.exists():
-                    os.remove(file_path)
+            # ✅ Безопасная отправка через оперативную память (Никаких физических файлов на диске!)
+            file_buffer = BytesIO(report.encode("utf-8"))
+            document = BufferedInputFile(file_buffer.getvalue(), filename=f"users_report_{message.from_user.id}.txt")
+            await message.answer_document(document, caption="👥 Список пользователей слишком длинный. Выгружен файлом.")
         else:
             await message.answer(f"<pre>{report}</pre>", parse_mode="HTML")
 
@@ -415,6 +407,137 @@ async def cmd_users_router(
     text += "\nУправлять ключом: <code>/key ID_ключа</code>"
     await message.answer(text, parse_mode="HTML")
 
+@router.message(Command("rotate_keys"))
+@inject
+async def cmd_rotate_keys(
+    message: Message,
+    key_repo: KeyRepository = Provide[Container.key_repo]
+) -> None:
+    """Перешифровка всей базы данных актуальным ключом"""
+    if not message.text or not message.from_user:
+        return
+
+    status_msg = await message.answer("🔄 Начинаю перешифровку базы данных новым ключом...\nЭто может занять несколько секунд.")
+    try:
+        updated_count = await key_repo.rotate_encryption()
+        logger.info("admin_action_rotate_keys", admin_id=message.from_user.id, updated_count=updated_count)
+        await status_msg.edit_text(
+            f"✅ База данных успешно перешифрована!\nОбновлено записей: <b>{updated_count}</b>.\n\n"
+            f"Теперь старый скомпрометированный ключ можно безопасно удалить из файла <code>.env</code>.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Произошла ошибка во время перешифровки: {e}")
+
+@router.message(Command("force_delete"))
+@inject
+async def cmd_force_delete(
+    message: Message,
+    key_repo: KeyRepository = Provide[Container.key_repo]
+) -> None:
+    """Принудительное удаление ключа-зомби из БД в обход 3x-ui"""
+    if not message.text or not message.from_user:
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Использование: <code>/force_delete ID_ключа</code>", parse_mode="HTML")
+        return
+
+    key_id = int(parts[1])
+    await key_repo.deactivate_key(key_id)
+    logger.info("admin_action_force_delete", admin_id=message.from_user.id, key_id=key_id)
+    await message.answer(f"🪓 Ключ <b>{key_id}</b> принудительно деактивирован в базе данных!", parse_mode="HTML")
+
+@router.message(Command("create_key"))
+@inject
+async def cmd_create_key(
+    message: Message,
+    key_repo: KeyRepository = Provide[Container.key_repo]
+) -> None:
+    """Автоматическая генерация нового ключа на сервере по шаблону"""
+    if not message.text or not message.from_user:
+        return
+
+    parts = message.text.split()
+    if len(parts) != 6:
+        await message.answer(
+            "Использование: <code>/create_key [TG_ID] [PANEL_HOST] [INBOUND_ID] [ЦЕНА] [ДНЕЙ]</code>\n"
+            "Пример: <code>/create_key 12345678 fastflow-de.duckdns.org 1 300 30</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    tg_id = int(parts[1])
+    panel_host = parts[2]
+    inbound_id = int(parts[3])
+    price = int(parts[4])
+    days = int(parts[5])
+
+    status_msg = await message.answer("⏳ Ищу шаблон конфигурации сети на сервере...")
+
+    # 1. Ищем шаблон (любой активный ключ с этого инбаунда для копирования SNI, pbk и т.д.)
+    conn = await key_repo.db.connect()
+    async with conn.execute(
+        "SELECT vless_key, settings FROM keys WHERE panel_host = ? AND inbound_id = ? AND is_active = 1 LIMIT 1",
+        (panel_host, inbound_id)
+    ) as cursor:
+        template_row = await cursor.fetchone()
+
+    if not template_row:
+        await status_msg.edit_text(f"❌ Нет активных ключей на сервере {panel_host} (inbound {inbound_id}), чтобы взять их за шаблон ссылки.")
+        return
+
+    from core.security import decrypt_data
+    template_link = decrypt_data(template_row["vless_key"])
+    template_settings = json.loads(decrypt_data(template_row["settings"]))
+
+    # 2. Генерируем новые криптографические данные
+    new_uuid = str(uuid.uuid4())
+    unique_email = f"user_{tg_id}_{new_uuid[:5]}"
+
+    # Находим старый UUID в шаблоне, чтобы его заменить (поддерживает VLESS и Hysteria2)
+    old_uuid = template_settings.get("id") or template_settings.get("password")
+    if not old_uuid:
+        await status_msg.edit_text("❌ В шаблоне ключа не найден UUID.")
+        return
+
+    new_link = template_link.replace(old_uuid, new_uuid)
+
+    # 3. Подготавливаем JSON для API 3x-ui
+    new_settings = template_settings.copy()
+    if "id" in new_settings:
+        new_settings["id"] = new_uuid
+    if "password" in new_settings:
+        new_settings["password"] = new_uuid
+    new_settings["email"] = unique_email
+
+    await status_msg.edit_text("⏳ Регистрирую клиента в панели 3x-ui...")
+
+    # 4. Отправляем запрос на панель
+    from services.panel import add_client_to_panel
+    success = await add_client_to_panel(panel_host, inbound_id, new_uuid, unique_email, json.dumps(new_settings))
+
+    if not success:
+        await status_msg.edit_text("❌ Ошибка API: Не удалось создать клиента на сервере 3x-ui.")
+        return
+
+    # 5. Сохраняем в нашу БД
+    payment_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    username = await key_repo.get_username(tg_id) or f"Client_{tg_id}"
+
+    await key_repo.add_key(
+        tg_id=tg_id, username=username, vless_key=new_link, price=price,
+        payment_date=payment_date, uuid=new_uuid, panel_host=panel_host,
+        inbound_id=inbound_id, settings=json.dumps(new_settings)
+    )
+
+    logger.info("admin_action_auto_create_key", admin_id=message.from_user.id, target_id=tg_id, panel=panel_host)
+    await status_msg.edit_text(
+        f"✅ <b>Ключ успешно сгенерирован и активирован!</b>\n\n"
+        f"🔗 <code>{new_link}</code>",
+        parse_mode="HTML"
+    )
 
 @router.message(Command("key"))
 @inject
@@ -441,7 +564,6 @@ async def cmd_manage_key(
     logger.info("admin_command_manage_key", admin_id=message.from_user.id if message.from_user else None, key_id=key_id)
 
     status = "✅ Активен" if key_info["is_active"] else "❌ Отключен"
-    short_key = f"{key_info['vless_key'][:40]}..." if len(key_info["vless_key"]) > 40 else key_info["vless_key"]
 
     text = (
         f"🏷 <b>Управление ключом ID {key_id}</b>\n\n"
@@ -451,7 +573,7 @@ async def cmd_manage_key(
         f"📊 Статус: {status}\n"
         f"📅 Истекает: <b>{key_info['next_payment_date']}</b>\n"
         f"💰 Цена: {key_info['price']}₽\n\n"
-        f"🔑 <b>Ключ:</b>\n<code>{html.escape(short_key)}</code>\n" # ✅ Безопасное экранирование html.escape
+        f"🔑 <b>Ключ:</b>\n<code>{html.escape(key_info['vless_key'])}</code>\n"
     )
 
     await message.answer(text, reply_markup=get_admin_extend_kb(key_id), parse_mode="HTML")

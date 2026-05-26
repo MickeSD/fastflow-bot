@@ -43,9 +43,8 @@ async def health_handler(request: aiohttp.web.Request) -> aiohttp.web.Response:
 
     # 1. Проверяем SQLite БД с жестким таймаутом
     try:
-        db = await container.db().connect()
-        # ✅ Ограничиваем ожидание ответа БД
-        await asyncio.wait_for(db.execute("SELECT 1"), timeout=3.0)
+        async with container.db().connect() as db:
+            await asyncio.wait_for(db.execute("SELECT 1"), timeout=3.0)
         checks["database"] = "ok"
     except Exception as e:
         logger.error("health_check_db_failed", error=str(e))

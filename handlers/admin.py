@@ -370,10 +370,12 @@ async def cmd_users_router(
             await message.answer("База пуста.")
             return
 
-        report = "👥 Список активных пользователей:\n\n"
+        report_lines = ["👥 Список активных пользователей:\n"]
         for u in users:
             safe_username = html.escape(str(u["username"]))
-            report += f"ID: {u['tg_id']} | @{safe_username} | Ключей: {u['keys_count']} | Сумма: {u['total_price']}₽\n"
+            report_lines.append(f"ID: {u['tg_id']} | @{safe_username} | Ключей: {u['keys_count']} | Сумма: {u['total_price']}₽")
+
+        report = "\n".join(report_lines)
 
         if len(report) > 3500:
             # ✅ Безопасная отправка через оперативную память (Никаких физических файлов на диске!)
@@ -477,12 +479,12 @@ async def cmd_create_key(
     status_msg = await message.answer("⏳ Ищу шаблон конфигурации сети на сервере...")
 
     # 1. Ищем шаблон (любой активный ключ с этого инбаунда для копирования SNI, pbk и т.д.)
-    conn = await key_repo.db.connect()
-    async with conn.execute(
-        "SELECT vless_key, settings FROM keys WHERE panel_host = ? AND inbound_id = ? AND is_active = 1 LIMIT 1",
-        (panel_host, inbound_id)
-    ) as cursor:
-        template_row = await cursor.fetchone()
+    async with key_repo.db.connect() as conn:
+        async with conn.execute(
+            "SELECT vless_key, settings FROM keys WHERE panel_host = ? AND inbound_id = ? AND is_active = 1 LIMIT 1",
+            (panel_host, inbound_id)
+        ) as cursor:
+            template_row = await cursor.fetchone()
 
     if not template_row:
         await status_msg.edit_text(f"❌ Нет активных ключей на сервере {panel_host} (inbound {inbound_id}), чтобы взять их за шаблон ссылки.")

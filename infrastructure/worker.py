@@ -9,6 +9,7 @@ from arq.connections import RedisSettings
 from core.config import BOT_TOKEN
 from core.di import Container
 from core.logger import setup_logging
+from services.panel import PanelAPI
 from services.scheduler import backup_database, check_payments, cleanup_inactive_keys
 
 logger = structlog.get_logger(__name__)
@@ -28,6 +29,7 @@ async def startup(ctx: dict) -> None:
 async def shutdown(ctx: dict) -> None:
     """Выполняется при остановке воркера"""
     logger.info("Остановка Worker-а...")
+    await PanelAPI.close()
     await ctx["bot"].session.close()
     await ctx["container"].db().close()
 

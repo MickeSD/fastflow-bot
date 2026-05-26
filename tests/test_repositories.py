@@ -15,21 +15,20 @@ async def real_db() -> AsyncGenerator[Database, None]:
     os.close(fd)
 
     db = Database(path)
-    conn = await db.connect()
 
-    # Имитируем миграции Alembic (создаем реальную структуру)
-    await conn.execute("CREATE TABLE users (tg_id INTEGER PRIMARY KEY, username TEXT)")
-    await conn.execute("""
-        CREATE TABLE keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id INTEGER, vless_key TEXT,
-            price INTEGER, next_payment_date DATE, uuid TEXT, panel_host TEXT,
-            inbound_id INTEGER, is_active BOOLEAN DEFAULT 1, settings TEXT,
-            deactivated_at TEXT, uuid_hash TEXT, FOREIGN KEY(tg_id) REFERENCES users(tg_id)
-        )
-    """)
-    # ✅ Тот самый уникальный индекс для защиты от гонки данных!
-    await conn.execute("CREATE UNIQUE INDEX idx_keys_active_uuid_hash_panel ON keys (panel_host, uuid_hash) WHERE is_active = 1")
-    await conn.commit()
+    async with db.connect() as conn:
+        # Имитируем миграции Alembic (создаем реальную структуру)
+        await conn.execute("CREATE TABLE users (tg_id INTEGER PRIMARY KEY, username TEXT)")
+        await conn.execute("""
+            CREATE TABLE keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id INTEGER, vless_key TEXT,
+                price INTEGER, next_payment_date DATE, uuid TEXT, panel_host TEXT,
+                inbound_id INTEGER, is_active BOOLEAN DEFAULT 1, settings TEXT,
+                deactivated_at TEXT, uuid_hash TEXT, FOREIGN KEY(tg_id) REFERENCES users(tg_id)
+            )
+        """)
+        await conn.execute("CREATE UNIQUE INDEX idx_keys_active_uuid_hash_panel ON keys (panel_host, uuid_hash) WHERE is_active = 1")
+        await conn.commit()
 
     yield db
 

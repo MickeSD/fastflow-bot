@@ -26,7 +26,8 @@ class VpnService:
         if inbound_status is False:
             return False, f"❌ Ошибка: Входящее подключение (Inbound ID: {info['inbound_id']}) удалено на панели!\nПродление невозможно."
         elif inbound_status is None:
-            logger.warning("blind_extend", panel=info['panel_host'], msg="Панель не отвечает, продлеваем вслепую")
+            logger.error("panel_offline", panel=info['panel_host'], msg="Панель не отвечает")
+            return False, "❌ Ошибка: Сервер панели недоступен. Продление отменено в целях безопасности."
 
         if info["is_active"]:
             success = await update_client_in_panel(

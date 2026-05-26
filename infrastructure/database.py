@@ -1,10 +1,10 @@
-import asyncio
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 import aiosqlite
 import structlog
 from aiogram import Bot
 
-# ✅ Добавили импорт BASE_DIR сюда:
 from core.config import ENCRYPTION_KEY
 from core.security import decrypt_data, encrypt_data
 
@@ -15,46 +15,27 @@ class Database:
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
-        self._conn: aiosqlite.Connection | None = None
-        self._lock = asyncio.Lock()
 
-    async def connect(self) -> aiosqlite.Connection:
-        """Получает или создает соединение с БД (Async-safe с защитой от Race Condition)."""
-        async with self._lock:
-            if self._conn is not None:
-                try:
-                    await self._conn.execute("SELECT 1")
-                    return self._conn
-                except Exception:
-                    try:
-                        await self._conn.close()
-                    except Exception:
-                        pass
-                    self._conn = None
-
-            # Создаем новое соединение строго внутри критической секции lock
-            self._conn = await aiosqlite.connect(self.db_path, timeout=10.0)
-            self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode=WAL;")
-            await self._conn.execute("PRAGMA foreign_keys=ON;")
-            return self._conn
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[aiosqlite.Connection, None]:
+        """Открывает новое изолированное соединение для каждой задачи."""
+        async with aiosqlite.connect(self.db_path, timeout=20.0) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL;")
+            await conn.execute("PRAGMA synchronous=NORMAL;")
+            await conn.execute("PRAGMA foreign_keys=ON;")
+            yield conn
 
     async def close(self) -> None:
-        """Безопасно закрывает соединение"""
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
-            logger.info("Соединение с БД закрыто.")
+        """Заглушка для обратной совместимости, соединения теперь закрываются сами."""
+        pass
 
     async def backup(self, backup_db: aiosqlite.Connection) -> None:
-        """Создает резервную копию базы данных"""
-        conn = await self.connect()
-        await conn.backup(backup_db)
+        async with self.connect() as conn:
+            await conn.backup(backup_db)
 
     async def init_db(self, bot: Bot | None = None) -> None:
-        """Инициализация БД"""
         if not ENCRYPTION_KEY:
-            # ✅ Фикс: Выбрасываем исключение вместо exit(1)
             raise RuntimeError("FATAL: Переменная ENCRYPTION_KEY не найдена в .env!")
 
         test_str = "fastflow_test"
@@ -63,13 +44,12 @@ class Database:
             if decrypt_data(enc) != test_str:
                 raise ValueError("Ошибка математики шифрования")
         except Exception as e:
-            # ✅ Фикс: Выбрасываем исключение
             raise RuntimeError(f"FATAL: Неверный формат ENCRYPTION_KEY! Ошибка: {e}") from e
 
-        conn = await self.connect()
-        async with conn.execute("SELECT COUNT(id) FROM keys WHERE is_active = 1 AND uuid_hash IS NULL") as cursor:
-            row = await cursor.fetchone()
-            if row and row[0] > 0:
-                raise RuntimeError(f"🚨 ФАТАЛЬНО: Найдено {row[0]} активных ключей без uuid_hash! Сначала выполните fill_hashes.py")
+        async with self.connect() as conn:
+            async with conn.execute("SELECT COUNT(id) FROM keys WHERE is_active = 1 AND uuid_hash IS NULL") as cursor:
+                row = await cursor.fetchone()
+                if row and row[0] > 0:
+                    raise RuntimeError(f"🚨 ФАТАЛЬНО: Найдено {row[0]} активных ключей без uuid_hash! Сначала выполните fill_hashes.py")
 
         logger.info("Подключение к БД успешно проверено.")

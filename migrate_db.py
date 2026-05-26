@@ -12,7 +12,9 @@ async def migrate() -> None:
 
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT id, uuid, settings FROM keys")
+
+        # Строго берем только незашифрованные строки по флагу
+        cursor = await db.execute("SELECT id, uuid, settings FROM keys WHERE is_encrypted = 0")
         rows = await cursor.fetchall()
 
         updated = 0
@@ -21,19 +23,19 @@ async def migrate() -> None:
             uuid = r["uuid"]
             settings = r["settings"]
 
-            new_uuid = uuid
-            new_settings = settings
+            new_uuid = encrypt_data(uuid) if uuid else uuid
+            new_settings = encrypt_data(settings) if settings else settings
 
-            # Токены Fernet всегда начинаются с gAAAAA, так мы понимаем, что текст еще не зашифрован
-            if uuid and not uuid.startswith("gAAAAA"):
-                new_uuid = encrypt_data(uuid)
-
-            if settings and not settings.startswith("gAAAAA"):
-                new_settings = encrypt_data(settings)
-
-            if new_uuid != uuid or new_settings != settings:
-                await db.execute("UPDATE keys SET uuid = ?, settings = ? WHERE id = ?", (new_uuid, new_settings, key_id))
+            try:
+                await db.execute(
+                    "UPDATE keys SET uuid = ?, settings = ?, is_encrypted = 1 WHERE id = ?",
+                    (new_uuid, new_settings, key_id)
+                )
                 updated += 1
+            except Exception as e:
+                print(f"Ошибка при шифровании ключа {key_id}: {e}")
+                await db.rollback()
+                raise e
 
         await db.commit()
         print(f"✅ Миграция завершена. Успешно зашифровано старых записей: {updated}")

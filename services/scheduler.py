@@ -17,7 +17,6 @@ from infrastructure.repositories import KeyRepository
 logger = structlog.get_logger(__name__)
 
 async def check_payments(ctx: dict) -> None:
-    # ✅ Достаем зависимости из контекста воркера
     bot: Bot = ctx["bot"]
     key_repo: KeyRepository = ctx["container"].key_repo()
     vpn_service: VpnService = ctx["container"].vpn_service()
@@ -46,20 +45,22 @@ async def check_payments(ctx: dict) -> None:
             await safe_send_message(bot, tg_id, f"‼️ Твой VPN (ID: {key_id}) истекает завтра! Стоимость продления: {price}₽.")
         elif days_left == 0:
             await safe_send_message(bot, tg_id, f"🚨 Твой VPN (ID: {key_id}) истекает СЕГОДНЯ! Оплати {price}₽, иначе завтра он будет отключен.")
-        elif days_left < 0:
-            # ✅ Защита от гонки данных (Race Condition)
+        elif days_left < 0 and days_left > -7:
+            # Грейс-период: просто спамим должника каждый день, но не удаляем
+            await safe_send_message(bot, tg_id, f"🚨 Твой доступ (ID: {key_id}) ПРОСРОЧЕН на {abs(days_left)} дн.! Оплати {price}₽, иначе ключ скоро будет удален безвозвратно.")
+
+        elif days_left <= -7:
+            # Юзер не платил неделю после просрочки — удаляем с концами (Hard Delete)
             current_info = await key_repo.get_key_info(key_id)
             if not current_info or not current_info["is_active"]:
-                continue  # Юзер уже успел отписаться сам, пропускаем!
+                continue
 
-            # Вся логика удаления и парсинга делегирована сервису
             success, msg_text = await vpn_service.cancel_subscription(key_id, tg_id)
-
             if success:
-                await safe_send_message(bot, tg_id, f"🚨 Твой доступ (ID: {key_id}) отключен за неуплату! Оплати {price}₽ для активации.")
-                await safe_send_message(bot, ADMIN_ID, f"💀 Ключ {key_id} (Юзер {tg_id}) отключен и деактивирован.")
+                await safe_send_message(bot, tg_id, f"💀 Твой VPN (ID: {key_id}) был полностью удален с сервера за длительную неуплату.")
+                await safe_send_message(bot, ADMIN_ID, f"💀 Ключ {key_id} (Юзер {tg_id}) удален (долг > 7 дней).")
             else:
-                await safe_send_message(bot, ADMIN_ID, f"⚠️ СБОЙ СЕТИ: Не удалось удалить ключ {key_id}. Ошибка: {msg_text}")
+                await safe_send_message(bot, ADMIN_ID, f"⚠️ СБОЙ СЕТИ: Не удалось удалить ключ должника {key_id}.")
 
         await asyncio.sleep(0.1)
 

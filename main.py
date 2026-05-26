@@ -54,7 +54,7 @@ async def main() -> None:
     dp.include_router(admin.router)
 
     logger.info("Бот запущен и планировщик активирован...")
-    await bot.delete_webhook(drop_pending_updates=False)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 

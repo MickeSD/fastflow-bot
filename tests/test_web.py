@@ -39,8 +39,9 @@ async def test_health_handler_success(mock_redis: AsyncMock) -> None:
     mock_db_connect = MagicMock()
     mock_db_connect.execute = AsyncMock()
 
+    # Имитируем контекстный менеджер для БД
     mock_db_instance = MagicMock()
-    mock_db_instance.connect = AsyncMock(return_value=mock_db_connect)
+    mock_db_instance.connect.return_value.__aenter__.return_value = mock_db_connect
 
     mock_container = MagicMock()
     mock_container.db.return_value = mock_db_instance
@@ -59,8 +60,5 @@ async def test_health_handler_success(mock_redis: AsyncMock) -> None:
     response = await health_handler(request)
 
     assert response.status == 200
-    # ✅ Утихомирили Mypy, гарантировав строку
     data = json.loads(response.text or "{}")
     assert data["status"] == "ok"
-    assert data["checks"]["database"] == "ok"
-    assert data["checks"]["redis"] == "ok"

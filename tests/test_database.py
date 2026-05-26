@@ -10,11 +10,11 @@ def db_instance() -> Database:
     return Database(db_path=":memory:")
 
 @pytest.mark.asyncio
-@patch("infrastructure.database.aiosqlite.connect", new_callable=AsyncMock)
+@patch("infrastructure.database.aiosqlite.connect")
 async def test_db_connect_success(mock_connect: AsyncMock, db_instance: Database) -> None:
-    """Тест: Успешное создание соединения с БД"""
+    """Тест: Успешное создание соединения с БД через асинхронный контекстный менеджер"""
     mock_conn = AsyncMock()
-    # Имитируем контекстный менеджер aiosqlite
+    # Имитируем async context manager
     mock_connect.return_value.__aenter__.return_value = mock_conn
 
     async with db_instance.connect() as conn:

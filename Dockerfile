@@ -35,7 +35,7 @@ COPY --chown=nonroot:nonroot keyboards/ ./keyboards/
 COPY --chown=nonroot:nonroot middlewares/ ./middlewares/
 COPY --chown=nonroot:nonroot migrations/ ./migrations/
 COPY --chown=nonroot:nonroot services/ ./services/
-COPY --chown=nonroot:nonroot main.py alembic.ini ./
+COPY --chown=nonroot:nonroot main.py alembic.ini migrate_db.py ./
 
 EXPOSE 8080
 ENTRYPOINT ["python"]

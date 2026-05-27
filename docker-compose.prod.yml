@@ -82,9 +82,7 @@ services:
     image: jaegertracing/all-in-one:latest
     container_name: jaeger
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:16686:16686"
-      # Порт 4318 убран наружу! Приложение шлет трейсы по внутренней сети Docker.
+    # 🔒 БЕЗОПАСНОСТЬ: Порты полностью закрыты. Доступ только через внутреннюю сеть или SSH-туннель.
     deploy:
       resources:
         limits:

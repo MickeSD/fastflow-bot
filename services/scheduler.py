@@ -21,7 +21,9 @@ async def check_payments(ctx: dict) -> None:
     key_repo: KeyRepository = ctx["container"].key_repo()
     vpn_service: VpnService = ctx["container"].vpn_service()
 
-    today = datetime.now(ZoneInfo("Europe/Moscow")).date()
+    today_date = datetime.now(ZoneInfo("Europe/Moscow")).date()
+    today_str = today_date.strftime("%Y-%m-%d")
+
     keys = await key_repo.get_active_payment_rows()
 
     for key in keys:
@@ -29,38 +31,54 @@ async def check_payments(ctx: dict) -> None:
         tg_id = key["tg_id"]
         price = key["price"]
         payment_date_str = key["next_payment_date"]
+        last_notif = key.get("last_notification_sent")
+        is_suspended = bool(key.get("is_suspended", 0))
+
+        # ✅ ИДЕМПОТЕНТНОСТЬ: Если мы уже уведомляли этого юзера сегодня — пропускаем
+        if last_notif == today_str:
+            continue
 
         try:
             payment_date = datetime.strptime(payment_date_str, "%Y-%m-%d").date()
-            days_left = (payment_date - today).days
+            days_left = (payment_date - today_date).days
         except Exception as e:
             logger.error(f"Ошибка даты у ключа {key_id}: {e}")
             continue
 
+        notified = False
+
         if days_left == 7:
-            await safe_send_message(bot, tg_id, f"ℹ️ Твой VPN (ID: {key_id}) истекает через неделю. Цена: {price}₽.")
+            notified = await safe_send_message(bot, tg_id, f"ℹ️ Твой VPN (ID: {key_id}) истекает через неделю. Цена: {price}₽.")
         elif days_left == 3:
-            await safe_send_message(bot, tg_id, f"⚠️ Твой VPN (ID: {key_id}) истекает через 3 дня! Оплати {price}₽, чтобы не потерять доступ.")
+            notified = await safe_send_message(bot, tg_id, f"⚠️ Твой VPN (ID: {key_id}) истекает через 3 дня! Оплати {price}₽, чтобы не потерять доступ.")
         elif days_left == 1:
-            await safe_send_message(bot, tg_id, f"‼️ Твой VPN (ID: {key_id}) истекает завтра! Стоимость продления: {price}₽.")
+            notified = await safe_send_message(bot, tg_id, f"‼️ Твой VPN (ID: {key_id}) истекает завтра! Стоимость продления: {price}₽.")
         elif days_left == 0:
-            await safe_send_message(bot, tg_id, f"🚨 Твой VPN (ID: {key_id}) истекает СЕГОДНЯ! Оплати {price}₽, иначе завтра он будет отключен.")
-        elif days_left < 0 and days_left > -7:
-            # Грейс-период: просто спамим должника каждый день, но не удаляем
-            await safe_send_message(bot, tg_id, f"🚨 Твой доступ (ID: {key_id}) ПРОСРОЧЕН на {abs(days_left)} дн.! Оплати {price}₽, иначе ключ скоро будет удален безвозвратно.")
+            notified = await safe_send_message(bot, tg_id, f"🚨 Твой VPN (ID: {key_id}) истекает СЕГОДНЯ! Оплати {price}₽, иначе завтра он будет приостановлен.")
 
+        # ✅ GRACE PERIOD (от 1 до 6 дней просрочки)
+        elif -7 < days_left < 0:
+            if not is_suspended:
+                # Приостанавливаем ключ на 3x-ui (трафик перестает идти)
+                suspend_ok = await vpn_service.suspend_subscription(key_id)
+                if suspend_ok:
+                    logger.info(f"Ключ {key_id} приостановлен (Grace Period).")
+
+            notified = await safe_send_message(bot, tg_id, f"🛑 Твой VPN (ID: {key_id}) ПРИОСТАНОВЛЕН за неуплату (просрочка {abs(days_left)} дн.).\nОплати {price}₽, чтобы мгновенно восстановить доступ, иначе через {7 - abs(days_left)} дн. он будет удален безвозвратно.")
+
+        # ✅ HARD DELETE (Неуплата более 7 дней)
         elif days_left <= -7:
-            # Юзер не платил неделю после просрочки — удаляем с концами (Hard Delete)
-            current_info = await key_repo.get_key_info(key_id)
-            if not current_info or not current_info["is_active"]:
-                continue
-
             success, msg_text = await vpn_service.cancel_subscription(key_id, tg_id)
             if success:
                 await safe_send_message(bot, tg_id, f"💀 Твой VPN (ID: {key_id}) был полностью удален с сервера за длительную неуплату.")
                 await safe_send_message(bot, ADMIN_ID, f"💀 Ключ {key_id} (Юзер {tg_id}) удален (долг > 7 дней).")
+                notified = True
             else:
                 await safe_send_message(bot, ADMIN_ID, f"⚠️ СБОЙ СЕТИ: Не удалось удалить ключ должника {key_id}.")
+
+        # Запоминаем факт успешного уведомления, чтобы не тревожить юзера до завтра
+        if notified:
+            await key_repo.mark_notification_sent(key_id, today_str)
 
         await asyncio.sleep(0.1)
 

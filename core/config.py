@@ -4,7 +4,7 @@ from pathlib import Path
 
 from aiohttp import ClientTimeout
 from cryptography.fernet import Fernet, MultiFernet
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,24 +56,33 @@ key_instances = [Fernet(k.strip().encode()) for k in ENCRYPTION_KEY.split(",") i
 cipher = MultiFernet(key_instances)
 REQUEST_TIMEOUT = ClientTimeout(total=10)
 
+class PanelConfig(BaseModel):
+    """Строгая схема валидации для каждой панели"""
+    url: str
+    user: str
+    pass_: str = Field(alias="pass")
+    name: str
+
 PANELS = {}
 for key, value in os.environ.items():
     match = re.match(r"^PANEL_(\d+)_HOST$", key)
     if match:
         idx = match.group(1)
         host = value
-        url = (os.getenv(f"PANEL_{idx}_URL") or "").rstrip("/")
-        user = os.getenv(f"PANEL_{idx}_USER")
-        pas = os.getenv(f"PANEL_{idx}_PASS")
-        name = os.getenv(f"PANEL_{idx}_NAME", f"🌐 Сервер {host}")
+        raw_url = (os.getenv(f"PANEL_{idx}_URL") or "").rstrip("/")
+        raw_user = os.getenv(f"PANEL_{idx}_USER")
+        raw_pas = os.getenv(f"PANEL_{idx}_PASS")
+        raw_name = os.getenv(f"PANEL_{idx}_NAME", f"🌐 Сервер {host}")
 
-        # ✅ Жесткая проверка: если конфигурация панели неполная — падаем до старта
-        if not all([host, url, user, pas]):
+        # Явные проверки помогают mypy понять, что значения больше не None
+        if not host or not raw_url or not raw_user or not raw_pas:
             raise ValueError(f"🚨 ФАТАЛЬНАЯ ОШИБКА: Неполная конфигурация для панели PANEL_{idx} в .env")
 
-        PANELS[host] = {
-            "url": url,
-            "user": user,
-            "pass": pas,
-            "name": name,
-        }
+        # Передаем словарь через model_validate, чтобы Pydantic сам разобрался с алиасом 'pass'
+        validated = PanelConfig.model_validate({
+            "url": raw_url,
+            "user": raw_user,
+            "pass": raw_pas,
+            "name": raw_name
+        })
+        PANELS[host] = validated.model_dump(by_alias=True)

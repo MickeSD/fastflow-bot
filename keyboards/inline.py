@@ -19,16 +19,6 @@ def get_admin_extend_kb(key_id: int) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
-
-def get_unsubscribe_kb(key_id: int) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text="❌ Отказаться от подписки", callback_data=f"user_unsub_{key_id}"
-    )
-    builder.adjust(1)
-    return builder.as_markup()
-
-
 def get_confirm_unsub_kb(key_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Да, уверен", callback_data=f"confirm_unsub_{key_id}")

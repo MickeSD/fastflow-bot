@@ -5,74 +5,73 @@ from aioresponses import aioresponses
 
 from services.panel import (
     PanelAPI,
+    PanelService,
     _safe_api_request,
-    add_client_to_panel,
-    delete_client_from_panel,
-    update_client_in_panel,
 )
 
 
+@pytest.fixture
+def service() -> PanelService:
+    return PanelService()
+
 @pytest.mark.asyncio
 async def test_safe_api_request_success() -> None:
-    """Тест: Успешный POST запрос"""
     panel = {"url": "http://fake-panel.com", "user": "admin", "pass": "admin"}
-
     with aioresponses() as m:
-        m.post(
-            "http://fake-panel.com/panel/api/inbounds/addClient",
-            payload={"success": True},
-        )
-
-        result = await _safe_api_request(
-            panel, "http://fake-panel.com/panel/api/inbounds/addClient"
-        )
+        m.post("http://fake-panel.com/panel/api/inbounds/addClient", payload={"success": True})
+        result = await _safe_api_request(panel, "http://fake-panel.com/panel/api/inbounds/addClient")
         assert result is True
         await PanelAPI.close()
-
 
 @pytest.mark.asyncio
 async def test_safe_api_request_retry_on_401() -> None:
-    """Тест: Бот должен обновить куки при ошибке 401 и повторить запрос"""
     panel = {"url": "http://fake-panel.com", "user": "admin", "pass": "admin"}
-
     with aioresponses() as m:
-        # 1-я попытка: Панель отвечает 401 (куки протухли)
         m.post("http://fake-panel.com/panel/api/inbounds/addClient", status=401)
-        # Бот пойдет логиниться
         m.post("http://fake-panel.com/login", payload={"success": True})
-        # 2-я попытка: Успех
-        m.post(
-            "http://fake-panel.com/panel/api/inbounds/addClient",
-            payload={"success": True},
-        )
-
-        result = await _safe_api_request(
-            panel, "http://fake-panel.com/panel/api/inbounds/addClient"
-        )
+        m.post("http://fake-panel.com/panel/api/inbounds/addClient", payload={"success": True})
+        result = await _safe_api_request(panel, "http://fake-panel.com/panel/api/inbounds/addClient")
         assert result is True
         await PanelAPI.close()
 
 @pytest.mark.asyncio
 @patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
 @patch("services.panel._safe_api_request", new_callable=AsyncMock)
-async def test_add_client_to_panel(mock_safe: AsyncMock) -> None:
+async def test_panel_service_success(mock_safe: AsyncMock) -> None:
+    """Проверка успешных вызовов PanelService"""
     mock_safe.return_value = True
-    res = await add_client_to_panel("test_host", 1, "uuid", "email")
-    assert res is True
-    mock_safe.assert_called_once()
+    service = PanelService()
+
+    assert await service.add_client("test_host", 1, "uuid", "email") is True
+    assert await service.update_client("test_host", 1, "uuid", "email") is True
+    assert await service.delete_client("test_host", 1, "uuid") is True
+    assert await service.inbound_exists("test_host", 1) is True
 
 @pytest.mark.asyncio
 @patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
 @patch("services.panel._safe_api_request", new_callable=AsyncMock)
-async def test_update_client_in_panel(mock_safe: AsyncMock) -> None:
-    mock_safe.return_value = True
-    res = await update_client_in_panel("test_host", 1, "uuid", "email")
-    assert res is True
+async def test_panel_service_exceptions(mock_safe: AsyncMock) -> None:
+    """Проверка обработки исключений и несуществующих панелей в PanelService"""
+    mock_safe.side_effect = Exception("API Down")
+    service = PanelService()
+
+    # Узел падает с ошибкой
+    assert await service.add_client("test_host", 1, "uuid", "email") is False
+    assert await service.update_client("test_host", 1, "uuid", "email") is False
+    assert await service.delete_client("test_host", 1, "uuid") is False
+    assert await service.inbound_exists("test_host", 1) is None
+
+    # Узел вообще не найден в конфиге
+    assert await service.add_client("wrong_host", 1, "uuid", "email") is False
 
 @pytest.mark.asyncio
-@patch("services.panel.PANELS", {"test_host": {"url": "http://test"}})
-@patch("services.panel._safe_api_request", new_callable=AsyncMock)
-async def test_delete_client_from_panel(mock_safe: AsyncMock) -> None:
-    mock_safe.return_value = True
-    res = await delete_client_from_panel("test_host", 1, "uuid")
-    assert res is True
+async def test_panel_service_wrong_host(service: PanelService) -> None:
+    assert await service.add_client("nonexistent", 1, "u", "e") is False
+
+@pytest.mark.asyncio
+@patch("services.panel.PANELS", {}) # Панели пусты
+async def test_panel_service_no_config(service: PanelService) -> None:
+    assert await service.add_client("unknown", 1, "u", "e") is False
+    assert await service.update_client("unknown", 1, "u", "e") is False
+    assert await service.delete_client("unknown", 1, "u") is False
+    assert await service.inbound_exists("unknown", 1) is False

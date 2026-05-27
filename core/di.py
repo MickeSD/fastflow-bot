@@ -4,6 +4,7 @@ from application.services.vpn import VpnService
 from core.config import BASE_DIR
 from infrastructure.database import Database
 from infrastructure.repositories import KeyRepository
+from services.panel import PanelService
 
 
 class Container(containers.DeclarativeContainer):
@@ -26,7 +27,10 @@ class Container(containers.DeclarativeContainer):
         db=db
     )
 
+    panel_service = providers.Factory(PanelService)
+
     vpn_service = providers.Factory(
         VpnService,
-        key_repo=key_repo
+        key_repo=key_repo,
+        panel_service=panel_service # Внедряем сервис панелей!
     )

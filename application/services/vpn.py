@@ -3,43 +3,49 @@ import json
 import structlog
 
 from infrastructure.repositories import KeyRepository
-from services.panel import (
-    add_client_to_panel,
-    delete_client_from_panel,
-    inbound_exists,
-    update_client_in_panel,
-)
+from services.panel import PanelService
 
 logger = structlog.get_logger(__name__)
 
 class VpnService:
-    def __init__(self, key_repo: KeyRepository) -> None:
+    def __init__(self, key_repo: KeyRepository, panel_service: PanelService) -> None:
         self.key_repo = key_repo
+        self.panel_service = panel_service
 
     async def extend_key(self, key_id: int, days: int) -> tuple[bool, str]:
         info = await self.key_repo.get_key_info(key_id)
         if not info:
             return False, "❌ Ключ не найден в базе."
 
-        inbound_status = await inbound_exists(info["panel_host"], info["inbound_id"] or 1)
-
+        inbound_status = await self.panel_service.inbound_exists(info["panel_host"], info["inbound_id"] or 1)
         if inbound_status is False:
-            return False, f"❌ Ошибка: Входящее подключение (Inbound ID: {info['inbound_id']}) удалено на панели!\nПродление невозможно."
+            return False, "❌ Ошибка: Входящее подключение удалено на панели!"
         elif inbound_status is None:
             logger.error("panel_offline", panel=info['panel_host'], msg="Панель не отвечает")
-            return False, "❌ Ошибка: Сервер панели недоступен. Продление отменено в целях безопасности."
+            return False, "❌ Сервер панели недоступен. Продление отменено."
+
+        # Гарантируем, что ключ будет Включен (enable: True)
+        try:
+            settings_dict = json.loads(info["settings"]) if info["settings"] else {}
+        except ValueError:
+            return False, "❌ Ошибка: Поврежденные настройки ключа в базе данных."
+
+        settings_dict["enable"] = True
+        active_settings = json.dumps(settings_dict)
+        email = settings_dict.get("email", f"user_{info['tg_id']}")
 
         if info["is_active"]:
-            success = await update_client_in_panel(
-                info["panel_host"], info["inbound_id"], info["uuid"], f"user_{info['tg_id']}", settings=info["settings"]
+            success = await self.panel_service.update_client(
+                info["panel_host"], info["inbound_id"], info["uuid"], email, settings=active_settings
             )
         else:
-            success = await add_client_to_panel(
-                info["panel_host"], info["inbound_id"], info["uuid"], f"user_{info['tg_id']}", settings=info["settings"]
+            success = await self.panel_service.add_client(
+                info["panel_host"], info["inbound_id"], info["uuid"], email, settings=active_settings
             )
 
         if success:
-            await self.key_repo.extend_subscription(key_id, int(days))
+            # Передаем active_settings в БД
+            await self.key_repo.extend_subscription(key_id, int(days), active_settings)
             return True, "✅ Подписка успешно продлена и активирована на сервере!"
 
         return False, "❌ Ошибка API панели. Продление отменено."
@@ -65,8 +71,8 @@ class VpnService:
         else:
             client_identifier = key_info["uuid"]
 
-        # 1. Удаляем с панели
-        success = await delete_client_from_panel(
+        # 1. Удаляем с панели (через изолированный сервис)
+        success = await self.panel_service.delete_client(
             key_info["panel_host"], key_info["inbound_id"] or 1, client_identifier
         )
 
@@ -76,3 +82,30 @@ class VpnService:
             return True, "✅ Ты успешно отписался. Твой ключ отключен."
 
         return False, "❌ Ошибка сервера панели. Пожалуйста, попробуй позже."
+
+    async def suspend_subscription(self, key_id: int) -> bool:
+        """Приостанавливает ключ на панели (Grace Period), но не удаляет его."""
+        info = await self.key_repo.get_key_info(key_id)
+        if not info:
+            return False
+
+        try:
+            settings_dict = json.loads(info["settings"]) if info["settings"] else {}
+        except ValueError:
+            settings_dict = {}
+
+        # Жестко отключаем ключ на уровне 3x-ui
+        settings_dict["enable"] = False
+        new_settings = json.dumps(settings_dict)
+
+        email = settings_dict.get("email", f"user_{info['tg_id']}")
+
+        # Отправляем обновленный конфиг на сервер
+        success = await self.panel_service.update_client(
+            info["panel_host"], info["inbound_id"] or 1, info["uuid"], email, settings=new_settings
+        )
+
+        if success:
+            await self.key_repo.set_suspended_status(key_id, True, new_settings)
+            return True
+        return False

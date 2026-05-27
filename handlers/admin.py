@@ -1,5 +1,6 @@
 import html
 import json
+import re
 import uuid
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -17,9 +18,11 @@ from dependency_injector.wiring import Provide, inject
 from application.services.vpn import VpnService
 from core.config import ADMIN_ID, PANELS
 from core.di import Container
+from core.security import decrypt_data
 from core.utils.telegram import safe_send_message
 from infrastructure.repositories import KeyRepository
 from keyboards.inline import get_admin_extend_kb
+from services.panel import PanelService
 
 logger = structlog.get_logger(__name__)
 
@@ -105,7 +108,12 @@ async def process_vless(message: Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(AddKeyFSM.inbound_id), F.text, ~F.text.startswith("/"))
-async def process_inbound_id(message: Message, state: FSMContext) -> None:
+@inject
+async def process_inbound_id(
+    message: Message,
+    state: FSMContext,
+    panel_service: PanelService = Provide[Container.panel_service] # DI
+) -> None:
     if not message.text or not message.from_user:
         return
 
@@ -118,9 +126,8 @@ async def process_inbound_id(message: Message, state: FSMContext) -> None:
     panel_host = data.get("panel_host")
 
     if panel_host:
-        from services.panel import inbound_exists
         status_msg = await message.answer("🔍 Проверяю существование подключения на панели 3x-ui...")
-        check_result = await inbound_exists(str(panel_host), inbound_id)
+        check_result = await panel_service.inbound_exists(str(panel_host), inbound_id)
 
         try:
             await status_msg.delete()
@@ -327,6 +334,15 @@ async def cmd_replace_all(
         await message.answer("❌ В целях безопасности заменяемая строка должна содержать не менее 5 символов.")
         return
 
+    # 🔒 БЕЗОПАСНОСТЬ: Строгая валидация нового значения (должен быть IP, домен или существовать в PANELS)
+    domain_ip_regex = re.compile(
+        r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$|" # IPv4
+        r"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$" # Домен
+    )
+    if new_str not in PANELS and not domain_ip_regex.match(new_str):
+        await message.answer("❌ Ошибка безопасности: Новое значение не является корректным IP-адресом, доменом и не найдено в конфигурации PANELS.")
+        return
+
     status_msg = await message.answer(f"⏳ Начинаю поиск и замену <code>{html.escape(old_str)}</code> на <code>{html.escape(new_str)}</code>...", parse_mode="HTML")
 
     updated_keys = await key_repo.bulk_replace_in_keys(old_str, new_str)
@@ -370,21 +386,24 @@ async def cmd_users_router(
             await message.answer("База пуста.")
             return
 
-        report_lines = ["👥 Список активных пользователей:\n"]
+        # Идеальный стриминг данных в память без пересоздания строк (решение проблемы Event Loop blocking)
+        file_buffer = BytesIO()
+        file_buffer.write("👥 Список активных пользователей:\n\n".encode("utf-8"))
+
         for u in users:
             safe_username = html.escape(str(u["username"]))
-            report_lines.append(f"ID: {u['tg_id']} | @{safe_username} | Ключей: {u['keys_count']} | Сумма: {u['total_price']}₽")
+            line = f"ID: {u['tg_id']} | @{safe_username} | Ключей: {u['keys_count']} | Сумма: {u['total_price']}₽\n"
+            file_buffer.write(line.encode("utf-8"))
 
-        report = "\n".join(report_lines)
+        report_size = file_buffer.tell()
 
-        if len(report) > 3500:
-            # ✅ Безопасная отправка через оперативную память (Никаких физических файлов на диске!)
-            file_buffer = BytesIO(report.encode("utf-8"))
+        if report_size > 3500:
             document = BufferedInputFile(file_buffer.getvalue(), filename=f"users_report_{message.from_user.id}.txt")
             await message.answer_document(document, caption="👥 Список пользователей слишком длинный. Выгружен файлом.")
         else:
-            await message.answer(f"<pre>{report}</pre>", parse_mode="HTML")
+            await message.answer(f"<pre>{file_buffer.getvalue().decode('utf-8')}</pre>", parse_mode="HTML")
 
+        file_buffer.close()
         await message.answer("Для просмотра ключей: <code>/users ID</code>\nУправление: <code>/key ID</code>", parse_mode="HTML")
         return
 
@@ -455,7 +474,8 @@ async def cmd_force_delete(
 @inject
 async def cmd_create_key(
     message: Message,
-    key_repo: KeyRepository = Provide[Container.key_repo]
+    key_repo: KeyRepository = Provide[Container.key_repo],
+    panel_service: PanelService = Provide[Container.panel_service] # DI
 ) -> None:
     """Автоматическая генерация нового ключа на сервере по шаблону"""
     if not message.text or not message.from_user:
@@ -490,7 +510,7 @@ async def cmd_create_key(
         await status_msg.edit_text(f"❌ Нет активных ключей на сервере {panel_host} (inbound {inbound_id}), чтобы взять их за шаблон ссылки.")
         return
 
-    from core.security import decrypt_data
+
     template_link = decrypt_data(template_row["vless_key"])
     template_settings = json.loads(decrypt_data(template_row["settings"]))
 
@@ -517,8 +537,7 @@ async def cmd_create_key(
     await status_msg.edit_text("⏳ Регистрирую клиента в панели 3x-ui...")
 
     # 4. Отправляем запрос на панель
-    from services.panel import add_client_to_panel
-    success = await add_client_to_panel(panel_host, inbound_id, new_uuid, unique_email, json.dumps(new_settings))
+    success = await panel_service.add_client(panel_host, inbound_id, new_uuid, unique_email, json.dumps(new_settings))
 
     if not success:
         await status_msg.edit_text("❌ Ошибка API: Не удалось создать клиента на сервере 3x-ui.")

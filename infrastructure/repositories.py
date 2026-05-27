@@ -31,7 +31,7 @@ class KeyRepository:
 
     async def get_key_info(self, key_id: int) -> dict[str, Any] | None:
         async with self.db.connect() as conn:
-            async with conn.execute("SELECT * FROM keys WHERE id = ?", (key_id,)) as cursor:
+            async with await conn.execute("SELECT * FROM keys WHERE id = ?", (key_id,)) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     row_dict = dict(row)
@@ -43,7 +43,7 @@ class KeyRepository:
 
     async def get_user_keys(self, tg_id: int) -> list[KeyRecord]:
         async with self.db.connect() as conn:
-            async with conn.execute("SELECT * FROM keys WHERE tg_id = ? AND is_active = 1", (tg_id,)) as cursor:
+            async with await conn.execute("SELECT * FROM keys WHERE tg_id = ? AND is_active = 1", (tg_id,)) as cursor:
                 rows = await cursor.fetchall()
                 return [
                     {
@@ -75,12 +75,10 @@ class KeyRepository:
                 logger.error("db_transaction_failed", error=str(e))
                 raise e
 
-    async def extend_subscription(self, key_id: int, days: int) -> None:
+    async def extend_subscription(self, key_id: int, days: int, new_settings: str) -> None: # Добавили new_settings
         async with self.db.connect() as conn:
             try:
-                async with conn.execute(
-                    "SELECT next_payment_date FROM keys WHERE id = ?", (key_id,)
-                ) as cursor:
+                async with await conn.execute("SELECT next_payment_date FROM keys WHERE id = ?", (key_id,)) as cursor:
                     row = await cursor.fetchone()
                     if not row:
                         return
@@ -91,15 +89,16 @@ class KeyRepository:
 
                     new_date = today + timedelta(days=days) if current_end < today else current_end + timedelta(days=days)
 
-                    await conn.execute(
-                        "UPDATE keys SET next_payment_date = ?, is_active = 1, deactivated_at = NULL WHERE id = ?",
-                        (new_date.strftime("%Y-%m-%d"), key_id),
-                    )
-                    await conn.commit()
+                # Снимаем is_suspended и сохраняем обновленные настройки
+                await conn.execute(
+                    "UPDATE keys SET next_payment_date = ?, is_active = 1, is_suspended = 0, deactivated_at = NULL, settings = ? WHERE id = ?",
+                    (new_date.strftime("%Y-%m-%d"), encrypt_data(new_settings), key_id),
+                )
+                await conn.commit()
             except Exception as e:
-                    await conn.rollback()
-                    logger.error("db_transaction_failed", error=str(e))
-                    raise e
+                await conn.rollback()
+                logger.error("db_transaction_failed", error=str(e))
+                raise e
 
     async def upsert_user(self, tg_id: int, username: str) -> None:
         """Добавляет пользователя, если его нет, или обновляет юзернейм"""
@@ -146,13 +145,13 @@ class KeyRepository:
     async def get_id_by_username(self, username: str) -> int | None:
         async with self.db.connect() as conn:
             clean_name = username.replace("@", "")
-            async with conn.execute("SELECT tg_id FROM users WHERE username = ?", (clean_name,)) as cursor:
+            async with await conn.execute("SELECT tg_id FROM users WHERE username = ?", (clean_name,)) as cursor:
                 row = await cursor.fetchone()
                 return row["tg_id"] if row else None
 
     async def get_users_grouped(self) -> list[aiosqlite.Row]:
         async with self.db.connect() as conn:
-            async with conn.execute("""
+            async with await conn.execute("""
                 SELECT users.tg_id, users.username, COUNT(keys.id) as keys_count, SUM(keys.price) as total_price
                 FROM users JOIN keys ON users.tg_id = keys.tg_id
                 WHERE keys.is_active = 1 GROUP BY users.tg_id
@@ -161,13 +160,13 @@ class KeyRepository:
 
     async def get_username(self, tg_id: int) -> str | None:
         async with self.db.connect() as conn:
-            async with conn.execute("SELECT username FROM users WHERE tg_id = ?", (tg_id,)) as cursor:
+            async with await conn.execute("SELECT username FROM users WHERE tg_id = ?", (tg_id,)) as cursor:
                 row = await cursor.fetchone()
                 return row["username"] if row else None
 
     async def get_all_active_keys(self) -> list[dict[str, Any]]:
         async with self.db.connect() as conn:
-            async with conn.execute(
+            async with await conn.execute(
                 "SELECT id, tg_id, price, next_payment_date, uuid, panel_host, inbound_id, settings FROM keys WHERE is_active = 1"
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -180,10 +179,10 @@ class KeyRepository:
                 return result
 
     async def get_active_payment_rows(self) -> list[dict[str, Any]]:
-        """Легкий метод для планировщика: без расшифровки секретов"""
         async with self.db.connect() as conn:
-            async with conn.execute(
-                "SELECT id, tg_id, price, next_payment_date FROM keys WHERE is_active = 1"
+            # Добавили last_notification_sent и is_suspended
+            async with await conn.execute(
+                "SELECT id, tg_id, price, next_payment_date, last_notification_sent, is_suspended FROM keys WHERE is_active = 1"
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
@@ -231,6 +230,10 @@ class KeyRepository:
         """Безопасная массовая замена IP/Домена во всех активных ключах (Enterprise Level)."""
         async with self.db.connect() as conn:
             try:
+                # 🔒 БЕЗОПАСНОСТЬ: Эксклюзивная блокировка БД (Write Lock) ДО начала чтения.
+                # Исключает чтение одних и тех же данных параллельными транзакциями.
+                await conn.execute("BEGIN IMMEDIATE")
+
                 cursor = await conn.execute("SELECT id, tg_id, vless_key, panel_host FROM keys WHERE is_active = 1")
                 rows = await cursor.fetchall()
 
@@ -313,3 +316,28 @@ class KeyRepository:
 
             await conn.commit()
             return updated
+
+    async def mark_notification_sent(self, key_id: int, date_str: str) -> None:
+        """Обновляет дату последнего отправленного уведомления."""
+        async with self.db.connect() as conn:
+            try:
+                await conn.execute("UPDATE keys SET last_notification_sent = ? WHERE id = ?", (date_str, key_id))
+                await conn.commit()
+            except Exception as e:
+                await conn.rollback()
+                logger.error("db_transaction_failed", error=str(e))
+                raise e
+
+    async def set_suspended_status(self, key_id: int, is_suspended: bool, new_settings: str) -> None:
+        """Обновляет статус блокировки (Grace Period) и сохраняет измененные настройки."""
+        async with self.db.connect() as conn:
+            try:
+                await conn.execute(
+                    "UPDATE keys SET is_suspended = ?, settings = ? WHERE id = ?",
+                    (int(is_suspended), encrypt_data(new_settings), key_id)
+                )
+                await conn.commit()
+            except Exception as e:
+                await conn.rollback()
+                logger.error("db_transaction_failed", error=str(e))
+                raise e
